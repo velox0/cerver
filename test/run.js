@@ -198,6 +198,7 @@ test("loadConfig merges defaults and supports export default configs", () => {
       embed: true,
       minify: true,
       compression: "none",
+      threads: 4,
     });
 
     writeFile(
@@ -210,6 +211,7 @@ test("loadConfig merges defaults and supports export default configs", () => {
       embed: false,
       minify: false,
       compression: "gzip",
+      threads: 4,
     });
   } finally {
     cleanup(dir);

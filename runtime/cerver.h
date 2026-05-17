@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <pthread.h>
 
 /* ------------------------------------------------------------------ */
 /*  Limits                                                            */
@@ -22,7 +23,11 @@
 #define CERVER_MAX_PATH        2048
 #define CERVER_MAX_HEADER_VAL  4096
 #define CERVER_READ_BUF        8192
+#define CERVER_READ_BUF_MAX    (1 << 20)   /* 1 MB hard limit */
 #define CERVER_MAX_ROUTES      256
+
+#define CERVER_THREAD_POOL_DEFAULT  4
+#define CERVER_TASK_QUEUE_SIZE      256
 
 /* ------------------------------------------------------------------ */
 /*  Key-value pair (used for headers, query params, route params)     */
@@ -146,10 +151,20 @@ typedef struct {
     int              asset_count;
     const char      *public_dir;   /* NULL if embedded mode */
     volatile int     running;
+
+    /* Thread pool */
+    int              thread_count;
+    pthread_t       *threads;
+    int              task_queue[CERVER_TASK_QUEUE_SIZE];
+    int              tq_head;
+    int              tq_tail;
+    int              tq_count;
+    pthread_mutex_t  tq_mutex;
+    pthread_cond_t   tq_cond;
 } cerver_server_t;
 
 /* Server lifecycle */
-int  cerver_init(cerver_server_t *srv, int port);
+int  cerver_init(cerver_server_t *srv, int port, int threads);
 int  cerver_add_routes(cerver_server_t *srv, cerver_route_t *routes, int count);
 int  cerver_set_assets(cerver_server_t *srv, cerver_asset_t *assets, int count);
 void cerver_set_public_dir(cerver_server_t *srv, const char *dir);
