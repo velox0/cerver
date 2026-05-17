@@ -1,0 +1,28 @@
+{
+  "name": "@velox0/cerver",
+  "version": "0.1.0",
+  "description": "Compile restricted JavaScript server logic into optimized native C binaries",
+  "main": "lib/index.js",
+  "bin": {
+    "cerver": "bin/cerver.js"
+  },
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "keywords": [
+    "c",
+    "compiler",
+    "http",
+    "server",
+    "native",
+    "binary",
+    "framework"
+  ],
+  "author": "Velox0",
+  "license": "MIT",
+  "dependencies": {
+    "acorn": "^8.14.0",
+    "acorn-walk": "^8.3.4",
+    "commander": "^13.1.0"
+  }
+}

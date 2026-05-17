@@ -1,0 +1,8 @@
+# Ignore development files and directories
+.idea/
+.DS_Store
+*.o
+dist/
+test-project/
+mysite/
+node_modules/
