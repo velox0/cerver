@@ -33,6 +33,16 @@ program
   });
 
 program
+  .command("dev")
+  .description("Watch for changes, auto-rebuild, and restart the server")
+  .option("-p, --port <port>", "Override the port")
+  .option("--no-embed", "Serve static assets from the filesystem")
+  .action((opts) => {
+    const { dev } = require("../lib/commands/dev");
+    dev(opts);
+  });
+
+program
   .command("run")
   .description("Run the compiled binary")
   .option("-p, --port <port>", "Override the port")

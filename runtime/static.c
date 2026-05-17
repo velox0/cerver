@@ -3,6 +3,7 @@
  *
  * In embedded mode, serves from the compiled-in asset array.
  * In external mode, serves from the filesystem (public/ directory).
+ * Supports pre-compressed gzip/brotli variants and cache headers.
  */
 
 #include "cerver.h"
@@ -30,6 +31,40 @@ static int path_is_safe(const char *path) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Accept-Encoding parsing                                           */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    int accepts_gzip;
+    int accepts_br;
+} encoding_prefs_t;
+
+static encoding_prefs_t parse_accept_encoding(const cerver_request_t *req) {
+    encoding_prefs_t prefs = { 0, 0 };
+    const char *ae = cerver_req_header(req, "Accept-Encoding");
+    if (!ae) return prefs;
+
+    if (strstr(ae, "br")) prefs.accepts_br = 1;
+    if (strstr(ae, "gzip")) prefs.accepts_gzip = 1;
+
+    return prefs;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Cache header helper                                               */
+/* ------------------------------------------------------------------ */
+
+static void add_cache_headers(cerver_response_t *res, const char *path) {
+    /* Hashed/versioned assets (in /static/) get long cache */
+    if (strstr(path, "/static/") || strstr(path, "/assets/")) {
+        cerver_res_header(res, "Cache-Control", "public, max-age=31536000, immutable");
+    } else {
+        /* HTML and other top-level files get short cache with revalidation */
+        cerver_res_header(res, "Cache-Control", "public, max-age=3600, must-revalidate");
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Serve from embedded assets                                        */
 /* ------------------------------------------------------------------ */
 
@@ -38,33 +73,59 @@ static int serve_embedded(cerver_server_t *srv, cerver_request_t *req,
     if (!srv->assets || srv->asset_count == 0) return -1;
 
     const char *path = req->path;
+    const cerver_asset_t *found = NULL;
 
     /* Try exact match first */
     for (int i = 0; i < srv->asset_count; i++) {
         if (strcmp(srv->assets[i].path, path) == 0) {
-            cerver_res_file(res, 200, srv->assets[i].mime_type,
-                           srv->assets[i].data, srv->assets[i].data_len);
-            return 0;
+            found = &srv->assets[i];
+            break;
         }
     }
 
     /* Try with /index.html appended (for directory-like paths) */
-    char index_path[CERVER_MAX_PATH];
-    if (path[strlen(path) - 1] == '/') {
-        snprintf(index_path, sizeof(index_path), "%sindex.html", path);
-    } else {
-        snprintf(index_path, sizeof(index_path), "%s/index.html", path);
-    }
+    if (!found) {
+        char index_path[CERVER_MAX_PATH];
+        if (path[strlen(path) - 1] == '/') {
+            snprintf(index_path, sizeof(index_path), "%sindex.html", path);
+        } else {
+            snprintf(index_path, sizeof(index_path), "%s/index.html", path);
+        }
 
-    for (int i = 0; i < srv->asset_count; i++) {
-        if (strcmp(srv->assets[i].path, index_path) == 0) {
-            cerver_res_file(res, 200, srv->assets[i].mime_type,
-                           srv->assets[i].data, srv->assets[i].data_len);
-            return 0;
+        for (int i = 0; i < srv->asset_count; i++) {
+            if (strcmp(srv->assets[i].path, index_path) == 0) {
+                found = &srv->assets[i];
+                break;
+            }
         }
     }
 
-    return -1;
+    if (!found) return -1;
+
+    /* Check for pre-compressed variants */
+    encoding_prefs_t enc = parse_accept_encoding(req);
+
+    if (enc.accepts_br && found->data_br && found->data_br_len > 0) {
+        /* Serve brotli */
+        cerver_res_file(res, 200, found->mime_type,
+                       found->data_br, found->data_br_len);
+        cerver_res_header(res, "Content-Encoding", "br");
+        cerver_res_header(res, "Vary", "Accept-Encoding");
+    } else if (enc.accepts_gzip && found->data_gz && found->data_gz_len > 0) {
+        /* Serve gzip */
+        cerver_res_file(res, 200, found->mime_type,
+                       found->data_gz, found->data_gz_len);
+        cerver_res_header(res, "Content-Encoding", "gzip");
+        cerver_res_header(res, "Vary", "Accept-Encoding");
+    } else {
+        /* Serve uncompressed */
+        cerver_res_file(res, 200, found->mime_type,
+                       found->data, found->data_len);
+    }
+
+    add_cache_headers(res, found->path);
+
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -122,6 +183,8 @@ static int serve_filesystem(cerver_server_t *srv, cerver_request_t *req,
     res->body = file_data;
     res->body_len = file_size;
     res->_body_owned = 1; /* We malloc'd this */
+
+    add_cache_headers(res, path);
 
     return 0;
 }

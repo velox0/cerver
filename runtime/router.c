@@ -51,7 +51,7 @@ const char *cerver_req_header(const cerver_request_t *req, const char *key) {
  * Pattern segments starting with ':' are dynamic and extract values.
  *
  * Examples:
- *   pattern="/art/:key"  path="/art/sunset"  → match, key="sunset"
+ *   pattern="/items/:id"  path="/items/123"  → match, id="123"
  *   pattern="/"          path="/"             → match
  *   pattern="/api/data"  path="/api/data"     → match
  *   pattern="/api/data"  path="/api/other"    → no match

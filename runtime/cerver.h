@@ -125,6 +125,12 @@ typedef struct {
     const char          *mime_type; /* e.g. "text/html" */
     const unsigned char *data;
     size_t               data_len;
+
+    /* Pre-compressed variants (NULL if not available) */
+    const unsigned char *data_gz;
+    size_t               data_gz_len;
+    const unsigned char *data_br;
+    size_t               data_br_len;
 } cerver_asset_t;
 
 /* ------------------------------------------------------------------ */
