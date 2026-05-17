@@ -18,6 +18,10 @@
     "binary",
     "framework"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/velox0/cerver.git"
+  },
   "author": "Velox0",
   "license": "MIT",
   "dependencies": {
