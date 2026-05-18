@@ -5,6 +5,7 @@
 #include "cerver.h"
 
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
 
 typedef struct {
