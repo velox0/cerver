@@ -2,13 +2,12 @@ name: Publish package
 
 on:
   push:
-    branches: [main]
-  release:
-    types: [published]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:

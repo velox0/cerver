@@ -6,3 +6,4 @@ dist/
 test-project/
 mysite/
 node_modules/
+.clang-format

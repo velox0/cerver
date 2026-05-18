@@ -1,6 +1,6 @@
 {
   "name": "@velox0/cerver",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Compile restricted JavaScript server logic into optimized native C binaries",
   "main": "lib/index.js",
   "bin": {
