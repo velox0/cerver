@@ -55,7 +55,7 @@
 static void* cerver_memmem(const void* hay, size_t haylen, const void* needle, size_t nlen) {
   if (nlen == 0) return (void*)hay;
   if (nlen > haylen) return NULL;
-  const char* p = (const char*)hay;
+  const char* p   = (const char*)hay;
   const char* end = p + haylen - nlen;
   for (; p <= end; p++) {
     if (memcmp(p, needle, nlen) == 0) return (void*)p;
@@ -91,12 +91,12 @@ static int get_cpu_count(void) {
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-  int fds[CERVER_CONN_QUEUE_SIZE];
-  int head;
-  int tail;
-  int count;
+  int             fds[CERVER_CONN_QUEUE_SIZE];
+  int             head;
+  int             tail;
+  int             count;
   pthread_mutex_t lock;
-  pthread_cond_t not_empty;
+  pthread_cond_t  not_empty;
 } conn_queue_t;
 
 static void cq_init(conn_queue_t* q) {
@@ -119,7 +119,7 @@ static int cq_push(conn_queue_t* q, int fd) {
     return -1;
   }
   q->fds[q->tail] = fd;
-  q->tail = (q->tail + 1) % CERVER_CONN_QUEUE_SIZE;
+  q->tail         = (q->tail + 1) % CERVER_CONN_QUEUE_SIZE;
   q->count++;
   pthread_cond_signal(&q->not_empty);
   pthread_mutex_unlock(&q->lock);
@@ -140,7 +140,7 @@ static int cq_pop(conn_queue_t* q, volatile int* running) {
     pthread_mutex_unlock(&q->lock);
     return -1;
   }
-  int fd = q->fds[q->head];
+  int fd  = q->fds[q->head];
   q->head = (q->head + 1) % CERVER_CONN_QUEUE_SIZE;
   q->count--;
   pthread_mutex_unlock(&q->lock);
@@ -152,31 +152,31 @@ static conn_queue_t g_conn_queue;
 
 /* Global worker readiness tracking */
 typedef struct {
-  int workers_ready;
-  int workers_expected;
+  int             workers_ready;
+  int             workers_expected;
   pthread_mutex_t lock;
-  pthread_cond_t ready_cv;
+  pthread_cond_t  ready_cv;
 } worker_readiness_t;
 
-static worker_readiness_t g_worker_readiness = {.workers_ready = 0,
+static worker_readiness_t g_worker_readiness = {.workers_ready    = 0,
                                                 .workers_expected = 0,
-                                                .lock = PTHREAD_MUTEX_INITIALIZER,
-                                                .ready_cv = PTHREAD_COND_INITIALIZER};
+                                                .lock             = PTHREAD_MUTEX_INITIALIZER,
+                                                .ready_cv         = PTHREAD_COND_INITIALIZER};
 
 /* Global acceptor startup tracking */
 typedef struct {
-  int acceptors_ready;
-  int start_accepting;
+  int             acceptors_ready;
+  int             start_accepting;
   pthread_mutex_t lock;
-  pthread_cond_t ready_cv;
-  pthread_cond_t start_cv;
+  pthread_cond_t  ready_cv;
+  pthread_cond_t  start_cv;
 } acceptor_readiness_t;
 
 static acceptor_readiness_t g_acceptor_readiness = {.acceptors_ready = 0,
                                                     .start_accepting = 0,
-                                                    .lock = PTHREAD_MUTEX_INITIALIZER,
-                                                    .ready_cv = PTHREAD_COND_INITIALIZER,
-                                                    .start_cv = PTHREAD_COND_INITIALIZER};
+                                                    .lock            = PTHREAD_MUTEX_INITIALIZER,
+                                                    .ready_cv        = PTHREAD_COND_INITIALIZER,
+                                                    .start_cv        = PTHREAD_COND_INITIALIZER};
 
 /* ------------------------------------------------------------------ */
 /*  Buffered read                                                     */
@@ -185,7 +185,7 @@ static acceptor_readiness_t g_acceptor_readiness = {.acceptors_ready = 0,
 static char* read_full_request(int fd, size_t* out_len) {
   size_t cap = CERVER_READ_BUF;
   size_t len = 0;
-  char* buf = malloc(cap + 1);
+  char*  buf = malloc(cap + 1);
   if (!buf) return NULL;
 
   while (len < (size_t)CERVER_READ_BUF_MAX) {
@@ -227,16 +227,16 @@ static void handle_connection(cerver_server_t* srv, int client_fd) {
   setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
 
   int request_count = 0;
-  int keepalive = 1;
+  int keepalive     = 1;
 
   while (keepalive && srv->running && request_count < CERVER_KEEPALIVE_MAX) {
     struct timeval tv;
-    tv.tv_sec = (request_count == 0) ? 5 : CERVER_KEEPALIVE_TIMEOUT;
+    tv.tv_sec  = (request_count == 0) ? 5 : CERVER_KEEPALIVE_TIMEOUT;
     tv.tv_usec = 0;
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     size_t req_len = 0;
-    char* buf = read_full_request(client_fd, &req_len);
+    char*  buf     = read_full_request(client_fd, &req_len);
     if (!buf || req_len == 0) {
       if (buf) free(buf);
       break;
@@ -355,9 +355,9 @@ static int create_listener(int port, int reuseport) {
 
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
+  addr.sin_family      = AF_INET;
   addr.sin_addr.s_addr = INADDR_ANY;
-  addr.sin_port = htons((uint16_t)port);
+  addr.sin_port        = htons((uint16_t)port);
 
   if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
     perror("cerver: bind");
@@ -380,7 +380,7 @@ static int create_listener(int port, int reuseport) {
 
 static int accept_connection(int listen_fd) {
   struct sockaddr_in ca;
-  socklen_t cl = sizeof(ca);
+  socklen_t          cl = sizeof(ca);
 #ifdef __linux__
   return accept4(listen_fd, (struct sockaddr*)&ca, &cl, SOCK_CLOEXEC);
 #else
@@ -394,7 +394,7 @@ static int accept_connection(int listen_fd) {
 
 #if CERVER_USE_KQUEUE
 static void* acceptor_loop(void* arg) {
-  cerver_worker_t* w = (cerver_worker_t*)arg;
+  cerver_worker_t* w   = (cerver_worker_t*)arg;
   cerver_server_t* srv = w->srv;
 
   int kq = kqueue();
@@ -419,8 +419,8 @@ static void* acceptor_loop(void* arg) {
   pthread_mutex_unlock(&g_acceptor_readiness.lock);
 
   while (srv->running) {
-    struct timespec ts = {1, 0};
-    int nev = kevent(kq, NULL, 0, events, CERVER_MAX_EVENTS, &ts);
+    struct timespec ts  = {1, 0};
+    int             nev = kevent(kq, NULL, 0, events, CERVER_MAX_EVENTS, &ts);
     if (nev < 0) {
       if (errno == EINTR) continue;
       break;
@@ -454,7 +454,7 @@ static void* acceptor_loop(void* arg) {
 
 #elif CERVER_USE_EPOLL
 static void* acceptor_loop(void* arg) {
-  cerver_worker_t* w = (cerver_worker_t*)arg;
+  cerver_worker_t* w   = (cerver_worker_t*)arg;
   cerver_server_t* srv = w->srv;
 
   int ep = epoll_create1(EPOLL_CLOEXEC);
@@ -511,7 +511,7 @@ static void* acceptor_loop(void* arg) {
 
 #else /* SELECT */
 static void* acceptor_loop(void* arg) {
-  cerver_worker_t* w = (cerver_worker_t*)arg;
+  cerver_worker_t* w   = (cerver_worker_t*)arg;
   cerver_server_t* srv = w->srv;
 
   pthread_mutex_lock(&g_acceptor_readiness.lock);
@@ -526,8 +526,8 @@ static void* acceptor_loop(void* arg) {
     fd_set rfds;
     FD_ZERO(&rfds);
     FD_SET(w->listen_fd, &rfds);
-    struct timeval tv = {1, 0};
-    int ret = select(w->listen_fd + 1, &rfds, NULL, NULL, &tv);
+    struct timeval tv  = {1, 0};
+    int            ret = select(w->listen_fd + 1, &rfds, NULL, NULL, &tv);
     if (ret < 0) {
       if (errno == EINTR) continue;
       break;
@@ -577,7 +577,7 @@ void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_
                              time_t mtime) {
   time_t now = time(NULL);
   pthread_mutex_lock(&cache->lock);
-  int best = 0;
+  int    best   = 0;
   time_t oldest = cache->entries[0].cached_at;
   for (int i = 0; i < CERVER_STAT_CACHE_SIZE; i++) {
     cerver_stat_entry_t* e = &cache->entries[i];
@@ -587,16 +587,16 @@ void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_
     }
     if (e->cached_at < oldest) {
       oldest = e->cached_at;
-      best = i;
+      best   = i;
     }
   }
   cerver_stat_entry_t* slot = &cache->entries[best];
   strncpy(slot->path, path, sizeof(slot->path) - 1);
   slot->path[sizeof(slot->path) - 1] = '\0';
-  slot->file_size = file_size;
-  slot->mtime = mtime;
-  slot->cached_at = now;
-  slot->valid = 1;
+  slot->file_size                    = file_size;
+  slot->mtime                        = mtime;
+  slot->cached_at                    = now;
+  slot->valid                        = 1;
   pthread_mutex_unlock(&cache->lock);
 }
 
@@ -606,25 +606,25 @@ void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_
 
 int cerver_init(cerver_server_t* srv, int port, int threads) {
   memset(srv, 0, sizeof(*srv));
-  srv->port = port;
-  srv->sock_fd = -1;
-  srv->running = 0;
-  srv->public_dir = NULL;
+  srv->port              = port;
+  srv->sock_fd           = -1;
+  srv->running           = 0;
+  srv->public_dir        = NULL;
   srv->dispatch_override = NULL;
-  srv->worker_count = (threads > 0) ? threads : get_cpu_count();
-  srv->workers = NULL;
+  srv->worker_count      = (threads > 0) ? threads : get_cpu_count();
+  srv->workers           = NULL;
   cerver_stat_cache_init(&srv->stat_cache);
   return 0;
 }
 
 int cerver_add_routes(cerver_server_t* srv, cerver_route_t* routes, int count) {
-  srv->routes = routes;
+  srv->routes      = routes;
   srv->route_count = count;
   return 0;
 }
 
 int cerver_set_assets(cerver_server_t* srv, cerver_asset_t* assets, int count) {
-  srv->assets = assets;
+  srv->assets      = assets;
   srv->asset_count = count;
   return 0;
 }
@@ -646,7 +646,7 @@ int cerver_listen(cerver_server_t* srv) {
   /* Determine pool and acceptor counts.
    * Acceptors: min(worker_count, cpu_count) — one per core for accept.
    * Pool workers: worker_count * 16 — enough to cover concurrent keep-alive. */
-  int cpu_count = get_cpu_count();
+  int cpu_count      = get_cpu_count();
   int acceptor_count = cpu_count;
   if (acceptor_count > srv->worker_count) acceptor_count = srv->worker_count;
   if (acceptor_count < 1) acceptor_count = 1;
@@ -660,7 +660,7 @@ int cerver_listen(cerver_server_t* srv) {
 
   /* Initialize worker readiness tracking */
   pthread_mutex_lock(&g_worker_readiness.lock);
-  g_worker_readiness.workers_ready = 0;
+  g_worker_readiness.workers_ready    = 0;
   g_worker_readiness.workers_expected = pool_size;
   pthread_mutex_unlock(&g_worker_readiness.lock);
 
@@ -711,7 +711,7 @@ int cerver_listen(cerver_server_t* srv) {
   }
 
   /* Start acceptor threads */
-  srv->workers = calloc((size_t)acceptor_count, sizeof(cerver_worker_t));
+  srv->workers      = calloc((size_t)acceptor_count, sizeof(cerver_worker_t));
   srv->worker_count = acceptor_count;
   if (!srv->workers) {
     perror("cerver: calloc acceptors");
@@ -726,9 +726,9 @@ int cerver_listen(cerver_server_t* srv) {
 
   for (int i = 0; i < acceptor_count; i++) {
     cerver_worker_t* w = &srv->workers[i];
-    w->id = i;
-    w->srv = srv;
-    w->event_fd = -1;
+    w->id              = i;
+    w->srv             = srv;
+    w->event_fd        = -1;
 #ifdef __linux__
     w->listen_fd = create_listener(srv->port, 1);
     if (w->listen_fd < 0) w->listen_fd = srv->sock_fd;

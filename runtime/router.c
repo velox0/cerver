@@ -84,7 +84,7 @@ int cerver_route_match(const cerver_route_t* route, cerver_request_t* req) {
   }
 
   const char* pattern = route->pattern;
-  const char* path = req->path;
+  const char* path    = req->path;
 
   /* Fast path: exact match */
   if (strcmp(pattern, path) == 0) {

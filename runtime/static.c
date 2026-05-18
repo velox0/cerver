@@ -62,7 +62,7 @@ typedef struct {
 
 static encoding_prefs_t parse_accept_encoding(const cerver_request_t* req) {
   encoding_prefs_t prefs = {0, 0};
-  const char* ae = cerver_req_header(req, "Accept-Encoding");
+  const char*      ae    = cerver_req_header(req, "Accept-Encoding");
   if (!ae) return prefs;
 
   if (strstr(ae, "br")) prefs.accepts_br = 1;
@@ -92,7 +92,7 @@ static void add_cache_headers(cerver_response_t* res, const char* path) {
 static int serve_embedded(cerver_server_t* srv, cerver_request_t* req, cerver_response_t* res) {
   if (!srv->assets || srv->asset_count == 0) return -1;
 
-  const char* path = req->path;
+  const char*           path  = req->path;
   const cerver_asset_t* found = NULL;
 
   /*
@@ -112,7 +112,7 @@ static int serve_embedded(cerver_server_t* srv, cerver_request_t* req, cerver_re
 
   /* Try with /index.html appended (for directory-like paths) */
   if (!found) {
-    char index_path[CERVER_MAX_PATH];
+    char   index_path[CERVER_MAX_PATH];
     size_t plen = strlen(path);
     if (plen > 0 && path[plen - 1] == '/') {
       snprintf(index_path, sizeof(index_path), "%sindex.html", path);
@@ -207,11 +207,11 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
     /* Advise the kernel we'll read sequentially */
     madvise(mapped, file_size, MADV_SEQUENTIAL);
 
-    res->status = 200;
+    res->status       = 200;
     res->content_type = mime;
-    res->body = (const char*)mapped;
-    res->body_len = file_size;
-    res->_body_owned = 2; /* Special flag: needs munmap, not free */
+    res->body         = (const char*)mapped;
+    res->body_len     = file_size;
+    res->_body_owned  = 2; /* Special flag: needs munmap, not free */
   } else {
     /* Small files: read into buffer (avoids mmap overhead) */
     int fd = open(full_path, O_RDONLY);
@@ -236,11 +236,11 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
       return -1;
     }
 
-    res->status = 200;
+    res->status       = 200;
     res->content_type = mime;
-    res->body = file_data;
-    res->body_len = file_size;
-    res->_body_owned = 1; /* malloc'd */
+    res->body         = file_data;
+    res->body_len     = file_size;
+    res->_body_owned  = 1; /* malloc'd */
   }
 
   add_cache_headers(res, path);

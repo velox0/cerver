@@ -3,5 +3,6 @@ IndentWidth: 2
 ColumnLimit: 100
 SortIncludes: false
 AlignConsecutiveMacros: true
-
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
 # Keep K&R/Google defaults otherwise - override per-project as needed

@@ -67,13 +67,13 @@ static void parse_query_string(char* qs, cerver_request_t* req) {
 
     char* eq = strchr(pair_start, '=');
     if (eq) {
-      *eq = '\0';
-      req->query[req->query_count].key = pair_start;
+      *eq                                = '\0';
+      req->query[req->query_count].key   = pair_start;
       req->query[req->query_count].value = eq + 1;
       url_decode((char*)req->query[req->query_count].key);
       url_decode((char*)req->query[req->query_count].value);
     } else {
-      req->query[req->query_count].key = pair_start;
+      req->query[req->query_count].key   = pair_start;
       req->query[req->query_count].value = "";
     }
     req->query_count++;
@@ -94,7 +94,7 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
    * The caller must keep it alive for the request's lifetime.
    */
   char* buf = (char*)raw;
-  buf[len] = '\0'; /* caller ensures buf has capacity for len+1 */
+  buf[len]  = '\0'; /* caller ensures buf has capacity for len+1 */
 
   /* We no longer allocate _raw_buf — the read buffer IS the raw buffer */
   req->_raw_buf = NULL;
@@ -117,7 +117,7 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
 
   /* Path (and maybe query string) */
   char* path_start = sp1 + 1;
-  char* sp2 = strchr(path_start, ' ');
+  char* sp2        = strchr(path_start, ' ');
   if (sp2) *sp2 = '\0';
 
   /* Split path and query string */
@@ -125,8 +125,8 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
   if (qmark) {
     *qmark = '\0';
     /* Point query_string directly into the buffer */
-    char* qs_start = qmark + 1;
-    size_t qs_len = strlen(qs_start);
+    char*  qs_start = qmark + 1;
+    size_t qs_len   = strlen(qs_start);
     if (qs_len >= sizeof(req->query_string)) qs_len = sizeof(req->query_string) - 1;
     memcpy(req->query_string, qs_start, qs_len);
     req->query_string[qs_len] = '\0';
@@ -148,7 +148,7 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
   }
 
   /* ---- Headers ---- */
-  char* hdr_start = line_end + 2; /* skip \r\n */
+  char*  hdr_start      = line_end + 2; /* skip \r\n */
   size_t content_length = 0;
 
   while (hdr_start < buf + len) {
@@ -166,11 +166,11 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
     if (req->header_count < CERVER_MAX_HEADERS) {
       char* colon = strchr(hdr_start, ':');
       if (colon) {
-        *colon = '\0';
+        *colon    = '\0';
         char* val = colon + 1;
         while (*val == ' ') val++;
 
-        req->headers[req->header_count].key = hdr_start;
+        req->headers[req->header_count].key   = hdr_start;
         req->headers[req->header_count].value = val;
         req->header_count++;
 
@@ -186,7 +186,7 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
 
   /* ---- Body (for POST etc.) ---- */
   if (content_length > 0 && hdr_start < buf + len) {
-    req->body = hdr_start;
+    req->body     = hdr_start;
     req->body_len = content_length;
     /* Ensure we don't read past the buffer */
     size_t remaining = (size_t)(buf + len - hdr_start);
