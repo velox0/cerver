@@ -1,8 +1,10 @@
-<div align="center">
-  <img src="templates/cerver.png" alt="Cerver Logo" width="120" />
-</div>
-
 # Cerver
+
+[![Publish](https://github.com/velox0/cerver/actions/workflows/publish.yml/badge.svg)](https://github.com/velox0/cerver/actions/workflows/publish.yml)
+[![CI](https://github.com/velox0/cerver/actions/workflows/ci.yml/badge.svg)](https://github.com/velox0/cerver/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@velox0/cerver)](https://www.npmjs.com/package/@velox0/cerver)
+
+<img src="templates/cerver.png" alt="Cerver Logo" width="200px" align="right" />
 
 A lightweight, compile-time web framework that transpiles restricted JavaScript server logic into highly optimized native C HTTP server binaries.
 
@@ -11,10 +13,25 @@ Cerver takes a Next.js-style file-based routing structure (written in a strict s
 ## Features
 
 - **Compile-Time Framework**: Your JavaScript is parsed and compiled to native C. There is no JavaScript engine (like V8) or interpreter included in the final binary.
-- **Microscopic Footprint**: Generated executables are typically ~50KB and start in milliseconds.
+- **Microscopic Footprint**: Generated executables are tiny and start in milliseconds.
 - **Single-Binary Deployment**: Static assets (HTML, CSS, JS, images) are automatically minified and embedded directly into the executable as C byte arrays.
 - **Native Performance**: Uses `kqueue` (macOS) or `epoll` (Linux) event loops for high-performance non-blocking I/O.
 - **File-Based Routing**: Intuitive `app/routes/` directory structure, supporting dynamic segments (e.g., `/item/[id].js`).
+
+## Benchmarks (Autocannon)
+
+Local loopback runs against `localhost`, 20s per run.
+
+Note: timeouts only appear at the highest concurrency (240 connections). On a single machine, autocannon and the server compete for CPU and kernel resources; the timeouts are likely client/loopback saturation rather than server errors.
+
+| Connections | Pipelining | Avg req/s | Avg latency | p99 latency | Total read | Errors (timeouts) |
+| ----------- | ---------- | --------- | ----------- | ----------- | ---------- | ----------------- |
+| 60          | 1          | 123,005   | 0.01 ms     | 0 ms        | 21.0 GB    | 0                 |
+| 60          | 10         | 125,973   | 4.26 ms     | 10 ms       | 21.5 GB    | 0                 |
+| 120         | 1          | 124,214   | 0.15 ms     | 1 ms        | 21.2 GB    | 0                 |
+| 120         | 10         | 131,245   | 8.64 ms     | 15 ms       | 22.4 GB    | 0                 |
+| 240         | 1          | 124,890   | 0.54 ms     | 1 ms        | 21.3 GB    | 118 (timeout)     |
+| 240         | 10         | 123,677   | 9.87 ms     | 14 ms       | 21.1 GB    | 1540 (timeout)    |
 
 ## Getting Started
 
