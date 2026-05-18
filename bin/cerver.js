@@ -7,6 +7,17 @@ const pkg = require("../package.json");
 
 const program = new Command();
 
+function restoreTty() {
+  const stdin = process.stdin;
+  if (!stdin || !stdin.isTTY || typeof stdin.setRawMode !== "function") return;
+  if (!stdin.isRaw) return;
+  try {
+    stdin.setRawMode(false);
+  } catch (_) {}
+}
+
+process.on("exit", restoreTty);
+
 program
   .name("cerver")
   .description("Compile restricted JavaScript into native C server binaries")
