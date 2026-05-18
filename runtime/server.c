@@ -151,6 +151,34 @@ static int cq_pop(conn_queue_t *q, volatile int *running) {
 /* Global connection queue */
 static conn_queue_t g_conn_queue;
 
+/* Global worker readiness tracking */
+typedef struct {
+    int workers_ready;
+    int workers_expected;
+    pthread_mutex_t lock;
+    pthread_cond_t ready_cv;
+} worker_readiness_t;
+
+static worker_readiness_t g_worker_readiness = {.workers_ready = 0,
+                                                .workers_expected = 0,
+                                                .lock = PTHREAD_MUTEX_INITIALIZER,
+                                                .ready_cv = PTHREAD_COND_INITIALIZER};
+
+/* Global acceptor startup tracking */
+typedef struct {
+    int acceptors_ready;
+    int start_accepting;
+    pthread_mutex_t lock;
+    pthread_cond_t ready_cv;
+    pthread_cond_t start_cv;
+} acceptor_readiness_t;
+
+static acceptor_readiness_t g_acceptor_readiness = {.acceptors_ready = 0,
+                                                    .start_accepting = 0,
+                                                    .lock = PTHREAD_MUTEX_INITIALIZER,
+                                                    .ready_cv = PTHREAD_COND_INITIALIZER,
+                                                    .start_cv = PTHREAD_COND_INITIALIZER};
+
 /* ------------------------------------------------------------------ */
 /*  Buffered read                                                     */
 /* ------------------------------------------------------------------ */
@@ -266,6 +294,33 @@ static void *conn_pool_worker(void *arg) {
     return NULL;
 }
 
+static int wait_for_pool_workers_ready(cerver_server_t* srv, int expected) {
+    pthread_mutex_lock(&g_worker_readiness.lock);
+    while (g_worker_readiness.workers_ready < expected && srv->running) {
+        pthread_cond_wait(&g_worker_readiness.ready_cv, &g_worker_readiness.lock);
+    }
+    int ready = (g_worker_readiness.workers_ready >= expected);
+    pthread_mutex_unlock(&g_worker_readiness.lock);
+    return ready;
+}
+
+static int wait_for_acceptors_ready(cerver_server_t* srv, int expected) {
+    pthread_mutex_lock(&g_acceptor_readiness.lock);
+    while (g_acceptor_readiness.acceptors_ready < expected && srv->running) {
+        pthread_cond_wait(&g_acceptor_readiness.ready_cv, &g_acceptor_readiness.lock);
+    }
+    int ready = (g_acceptor_readiness.acceptors_ready >= expected);
+    pthread_mutex_unlock(&g_acceptor_readiness.lock);
+    return ready;
+}
+
+static void release_acceptors(void) {
+    pthread_mutex_lock(&g_acceptor_readiness.lock);
+    g_acceptor_readiness.start_accepting = 1;
+    pthread_cond_broadcast(&g_acceptor_readiness.start_cv);
+    pthread_mutex_unlock(&g_acceptor_readiness.lock);
+}
+
 /* ------------------------------------------------------------------ */
 /*  Create a listening socket                                         */
 /* ------------------------------------------------------------------ */
@@ -334,6 +389,14 @@ static void *acceptor_loop(void *arg) {
 
     struct kevent events[CERVER_MAX_EVENTS];
 
+    pthread_mutex_lock(&g_acceptor_readiness.lock);
+    g_acceptor_readiness.acceptors_ready++;
+    pthread_cond_broadcast(&g_acceptor_readiness.ready_cv);
+    while (!g_acceptor_readiness.start_accepting && srv->running) {
+        pthread_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
+    }
+    pthread_mutex_unlock(&g_acceptor_readiness.lock);
+
     while (srv->running) {
         struct timespec ts = { 1, 0 };
         int nev = kevent(kq, NULL, 0, events, CERVER_MAX_EVENTS, &ts);
@@ -377,6 +440,14 @@ static void *acceptor_loop(void *arg) {
     epoll_ctl(ep, EPOLL_CTL_ADD, w->listen_fd, &ev);
 
     struct epoll_event events[CERVER_MAX_EVENTS];
+
+    pthread_mutex_lock(&g_acceptor_readiness.lock);
+    g_acceptor_readiness.acceptors_ready++;
+    pthread_cond_broadcast(&g_acceptor_readiness.ready_cv);
+    while (!g_acceptor_readiness.start_accepting && srv->running) {
+        pthread_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
+    }
+    pthread_mutex_unlock(&g_acceptor_readiness.lock);
 
     while (srv->running) {
         int nev = epoll_wait(ep, events, CERVER_MAX_EVENTS, 1000);
@@ -541,12 +612,19 @@ int cerver_listen(cerver_server_t *srv) {
     if (pool_size < CERVER_CONN_POOL_SIZE) pool_size = CERVER_CONN_POOL_SIZE;
     if (pool_size > 1024) pool_size = 1024;
 
-    printf("cerver: listening on http://localhost:%d\n", srv->port);
-    printf("cerver: %d acceptor(s), %d connection workers, keep-alive max %d req/conn\n",
-           acceptor_count, pool_size, CERVER_KEEPALIVE_MAX);
-
     /* Init shared connection queue */
     cq_init(&g_conn_queue);
+
+    /* Initialize worker readiness tracking */
+    pthread_mutex_lock(&g_worker_readiness.lock);
+    g_worker_readiness.workers_ready = 0;
+    g_worker_readiness.workers_expected = pool_size;
+    pthread_mutex_unlock(&g_worker_readiness.lock);
+
+    pthread_mutex_lock(&g_acceptor_readiness.lock);
+    g_acceptor_readiness.acceptors_ready = 0;
+    g_acceptor_readiness.start_accepting = 0;
+    pthread_mutex_unlock(&g_acceptor_readiness.lock);
 
     /* Start connection pool workers */
     pthread_t *pool_threads = calloc((size_t)pool_size, sizeof(pthread_t));
@@ -566,6 +644,23 @@ int cerver_listen(cerver_server_t *srv) {
             pthread_attr_destroy(&attr);
             return -1;
         }
+    }
+
+    if (!wait_for_pool_workers_ready(srv, pool_size)) {
+        srv->running = 0;
+        for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
+        free(pool_threads);
+        pthread_attr_destroy(&attr);
+        return -1;
+    }
+
+    srv->sock_fd = create_listener(srv->port, 0);
+    if (srv->sock_fd < 0) {
+        srv->running = 0;
+        for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
+        free(pool_threads);
+        pthread_attr_destroy(&attr);
+        return -1;
     }
 
     /* Start acceptor threads */
@@ -600,6 +695,22 @@ int cerver_listen(cerver_server_t *srv) {
             break;
         }
     }
+
+    if (!wait_for_acceptors_ready(srv, acceptor_count)) {
+        srv->running = 0;
+        release_acceptors();
+        for (int i = 0; i < acceptor_count; i++) pthread_join(srv->workers[i].thread, NULL);
+        for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
+        free(pool_threads);
+        pthread_attr_destroy(&attr);
+        return -1;
+    }
+
+    printf("cerver: listening on http://localhost:%d\n", srv->port);
+    printf("cerver: %d acceptor(s), %d connection workers, keep-alive max %d req/conn\n",
+           acceptor_count, pool_size, CERVER_KEEPALIVE_MAX);
+
+    release_acceptors();
 
     pthread_attr_destroy(&attr);
 
