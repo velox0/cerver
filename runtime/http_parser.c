@@ -2,7 +2,8 @@
  * http_parser.c — Minimal HTTP/1.1 request parser.
  *
  * Parses method, path, query string, and headers from a raw HTTP request.
- * No external dependencies.
+ * All parsing is done IN-PLACE on the caller's buffer — no copies are made.
+ * The caller must keep the buffer alive for the lifetime of the request.
  */
 
 #include "cerver.h"
@@ -48,59 +49,65 @@ static void url_decode(char *str) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Parse query string: "a=1&b=2" → key-value pairs                  */
+/*  Parse query string IN-PLACE: "a=1&b=2" → key-value pairs         */
 /* ------------------------------------------------------------------ */
 
 static void parse_query_string(char *qs, cerver_request_t *req) {
     if (!qs || !*qs) return;
 
-    char *saveptr = NULL;
-    char *pair = strtok_r(qs, "&", &saveptr);
+    /* Parse directly on the buffer — no strdup needed */
+    char *p = qs;
 
-    while (pair && req->query_count < CERVER_MAX_QUERY) {
-        char *eq = strchr(pair, '=');
+    while (*p && req->query_count < CERVER_MAX_QUERY) {
+        char *pair_start = p;
+
+        /* Find end of pair (& or NUL) */
+        while (*p && *p != '&') p++;
+        if (*p == '&') *p++ = '\0';
+
+        char *eq = strchr(pair_start, '=');
         if (eq) {
             *eq = '\0';
-            req->query[req->query_count].key = pair;
+            req->query[req->query_count].key = pair_start;
             req->query[req->query_count].value = eq + 1;
             url_decode((char *)req->query[req->query_count].key);
             url_decode((char *)req->query[req->query_count].value);
         } else {
-            req->query[req->query_count].key = pair;
+            req->query[req->query_count].key = pair_start;
             req->query[req->query_count].value = "";
         }
         req->query_count++;
-        pair = strtok_r(NULL, "&", &saveptr);
     }
 }
 
 /* ------------------------------------------------------------------ */
-/*  Parse the HTTP request                                            */
+/*  Parse the HTTP request IN-PLACE                                   */
 /* ------------------------------------------------------------------ */
 
 int cerver_parse_request(const char *raw, size_t len, cerver_request_t *req) {
     if (!raw || len == 0) return -1;
 
-    /* We need a mutable copy because we'll be inserting NUL terminators */
-    char *buf = malloc(len + 1);
-    if (!buf) return -1;
-    memcpy(buf, raw, len);
-    buf[len] = '\0';
+    /*
+     * We parse in-place: the caller gives us a mutable buffer (cast away
+     * const — the caller's read_full_request already owns a mutable buffer).
+     * All internal pointers (headers, query, body) reference this buffer.
+     * The caller must keep it alive for the request's lifetime.
+     */
+    char *buf = (char *)raw;
+    buf[len] = '\0';  /* caller ensures buf has capacity for len+1 */
 
-    req->_raw_buf = buf;
+    /* We no longer allocate _raw_buf — the read buffer IS the raw buffer */
+    req->_raw_buf = NULL;
     req->_raw_len = len;
 
     /* ---- Request line: METHOD PATH HTTP/1.x ---- */
     char *line_end = strstr(buf, "\r\n");
-    if (!line_end) {
-        free(buf);
-        return -1;
-    }
+    if (!line_end) return -1;
     *line_end = '\0';
 
     /* Method */
     char *sp1 = strchr(buf, ' ');
-    if (!sp1) { free(buf); return -1; }
+    if (!sp1) return -1;
     *sp1 = '\0';
 
     size_t method_len = (size_t)(sp1 - buf);
@@ -117,8 +124,16 @@ int cerver_parse_request(const char *raw, size_t len, cerver_request_t *req) {
     char *qmark = strchr(path_start, '?');
     if (qmark) {
         *qmark = '\0';
-        strncpy(req->query_string, qmark + 1, sizeof(req->query_string) - 1);
-        req->query_string[sizeof(req->query_string) - 1] = '\0';
+        /* Point query_string directly into the buffer */
+        char *qs_start = qmark + 1;
+        size_t qs_len = strlen(qs_start);
+        if (qs_len >= sizeof(req->query_string)) qs_len = sizeof(req->query_string) - 1;
+        memcpy(req->query_string, qs_start, qs_len);
+        req->query_string[qs_len] = '\0';
+
+        /* Parse query params in-place from query_string
+         * (we copied to req->query_string so params point into req memory) */
+        parse_query_string(req->query_string, req);
     }
 
     /* Decode and store path */
@@ -130,17 +145,6 @@ int cerver_parse_request(const char *raw, size_t len, cerver_request_t *req) {
     size_t plen = strlen(req->path);
     if (plen > 1 && req->path[plen - 1] == '/') {
         req->path[plen - 1] = '\0';
-    }
-
-    /* Parse query string */
-    if (req->query_string[0]) {
-        /* We need a mutable copy for strtok */
-        char *qs_copy = strdup(req->query_string);
-        if (qs_copy) {
-            parse_query_string(qs_copy, req);
-            /* Note: keys/values point into qs_copy which we leak intentionally
-               since the request's lifetime is short (one connection). */
-        }
     }
 
     /* ---- Headers ---- */

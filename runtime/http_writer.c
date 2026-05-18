@@ -1,7 +1,8 @@
 /*
  * http_writer.c — HTTP/1.1 response writer.
  *
- * Formats a cerver_response_t into raw HTTP bytes and writes to a socket fd.
+ * Uses writev() for zero-copy header+body writes.
+ * Supports keep-alive and Connection: close signaling.
  */
 
 #include "cerver.h"
@@ -10,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/uio.h>
 
 /* ------------------------------------------------------------------ */
 /*  Status text lookup                                                */
@@ -29,15 +31,16 @@ static const char *status_text(int code) {
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
         case 500: return "Internal Server Error";
+        case 503: return "Service Unavailable";
         default:  return "Unknown";
     }
 }
 
 /* ------------------------------------------------------------------ */
-/*  Write the full response to fd                                     */
+/*  Write the full response to fd using writev                        */
 /* ------------------------------------------------------------------ */
 
-int cerver_write_response(int fd, const cerver_response_t *res) {
+int cerver_write_response(int fd, const cerver_response_t *res, int keepalive) {
     /* Build the response header */
     char header[4096];
     int hlen = 0;
@@ -63,9 +66,14 @@ int cerver_write_response(int fd, const cerver_response_t *res) {
                          res->headers[i].key, res->headers[i].value);
     }
 
-    /* Connection: close (we don't do keep-alive in v0.1) */
-    hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen,
-                     "Connection: close\r\n");
+    /* Connection header — honor keep-alive state */
+    if (keepalive && !res->_force_close) {
+        hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen,
+                         "Connection: keep-alive\r\n");
+    } else {
+        hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen,
+                         "Connection: close\r\n");
+    }
 
     /* Server header */
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen,
@@ -74,18 +82,41 @@ int cerver_write_response(int fd, const cerver_response_t *res) {
     /* End of headers */
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "\r\n");
 
-    /* Write header */
-    ssize_t written = write(fd, header, (size_t)hlen);
-    if (written < 0) return -1;
-
-    /* Write body */
+    /*
+     * Use writev() to send header + body in a single syscall.
+     * This avoids Nagle interaction and reduces context switches.
+     */
     if (res->body && res->body_len > 0) {
-        size_t total = 0;
-        while (total < res->body_len) {
-            ssize_t n = write(fd, res->body + total, res->body_len - total);
+        struct iovec iov[2];
+        iov[0].iov_base = header;
+        iov[0].iov_len = (size_t)hlen;
+        iov[1].iov_base = (void *)res->body;
+        iov[1].iov_len = res->body_len;
+
+        size_t total = iov[0].iov_len + iov[1].iov_len;
+        size_t written = 0;
+
+        while (written < total) {
+            ssize_t n = writev(fd, iov, 2);
             if (n < 0) return -1;
-            total += (size_t)n;
+            written += (size_t)n;
+
+            /* Adjust iov for partial writes */
+            if (written < iov[0].iov_len) {
+                iov[0].iov_base = header + written;
+                iov[0].iov_len -= (size_t)n;
+            } else {
+                /* Header fully sent, adjust body iov */
+                size_t body_sent = written - (size_t)hlen;
+                iov[0].iov_len = 0;
+                iov[1].iov_base = (void *)(res->body + body_sent);
+                iov[1].iov_len = res->body_len - body_sent;
+            }
         }
+    } else {
+        /* No body — just send header */
+        ssize_t written = write(fd, header, (size_t)hlen);
+        if (written < 0) return -1;
     }
 
     return 0;

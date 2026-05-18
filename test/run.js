@@ -328,7 +328,7 @@ test("generateEmbeddedAssets can emit gzip variants for compressible assets", as
     assert.match(code, /static const unsigned int asset_css_app_css_gz_len = \d+;/);
     assert.match(
       code,
-      /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, asset_css_app_css_gz, asset_css_app_css_gz_len, NULL, 0 \},/
+      /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, asset_css_app_css_gz, asset_css_app_css_gz_len, NULL, 0, NULL, 0 \},/
     );
   } finally {
     cleanup(dir);

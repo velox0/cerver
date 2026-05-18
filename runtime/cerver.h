@@ -26,8 +26,21 @@
 #define CERVER_READ_BUF_MAX    (1 << 20)   /* 1 MB hard limit */
 #define CERVER_MAX_ROUTES      256
 
+/* Keep-alive settings */
+#define CERVER_KEEPALIVE_MAX     10000   /* max requests per connection */
+#define CERVER_KEEPALIVE_TIMEOUT 5     /* seconds idle between requests */
+
+/* Event loop tuning */
+#define CERVER_MAX_EVENTS      256
+#define CERVER_LISTEN_BACKLOG  4096
+
+/* Worker architecture */
 #define CERVER_THREAD_POOL_DEFAULT  4
-#define CERVER_TASK_QUEUE_SIZE      256
+#define CERVER_TASK_QUEUE_SIZE      1024
+
+/* Stat cache for filesystem serving */
+#define CERVER_STAT_CACHE_SIZE   256
+#define CERVER_STAT_CACHE_TTL    60    /* seconds */
 
 /* ------------------------------------------------------------------ */
 /*  Key-value pair (used for headers, query params, route params)     */
@@ -68,7 +81,7 @@ typedef struct {
     const char *body;
     size_t      body_len;
 
-    /* Internal: raw buffer ownership */
+    /* Internal: raw buffer ownership (NULL if in-place parsing used) */
     char       *_raw_buf;
     size_t      _raw_len;
 } cerver_request_t;
@@ -91,6 +104,9 @@ typedef struct {
 
     /* Internal flag: was body malloc'd? */
     int         _body_owned;
+
+    /* Keep-alive control: set to 1 to force close after response */
+    int         _force_close;
 } cerver_response_t;
 
 /* Response helpers — called by generated handler code */
@@ -108,6 +124,9 @@ void cerver_res_header(cerver_response_t *res, const char *key, const char *val)
 const char *cerver_req_param(const cerver_request_t *req, const char *key);
 const char *cerver_req_query(const cerver_request_t *req, const char *key);
 const char *cerver_req_header(const cerver_request_t *req, const char *key);
+
+/* Check if client wants to close after this request */
+int cerver_req_wants_close(const cerver_request_t *req);
 
 /* ------------------------------------------------------------------ */
 /*  Route definition                                                  */
@@ -136,13 +155,54 @@ typedef struct {
     size_t               data_gz_len;
     const unsigned char *data_br;
     size_t               data_br_len;
+
+    /* Pre-computed response header (NULL if not generated) */
+    const char          *prebuilt_header;
+    size_t               prebuilt_header_len;
 } cerver_asset_t;
+
+/* ------------------------------------------------------------------ */
+/*  Stat cache for filesystem serving                                 */
+/* ------------------------------------------------------------------ */
+
+typedef struct {
+    char     path[CERVER_MAX_PATH];
+    size_t   file_size;
+    time_t   mtime;
+    time_t   cached_at;
+    int      valid;
+} cerver_stat_entry_t;
+
+typedef struct {
+    cerver_stat_entry_t entries[CERVER_STAT_CACHE_SIZE];
+    pthread_mutex_t     lock;
+} cerver_stat_cache_t;
+
+/* ------------------------------------------------------------------ */
+/*  Generated dispatch (compile-time route optimization)              */
+/* ------------------------------------------------------------------ */
+
+typedef cerver_handler_fn (*cerver_dispatch_fn)(cerver_request_t *req);
+
+/* ------------------------------------------------------------------ */
+/*  Worker state (per-core event loop)                                */
+/* ------------------------------------------------------------------ */
+
+typedef struct cerver_server cerver_server_t;
+
+typedef struct {
+    int              id;
+    int              event_fd;      /* kqueue or epoll fd */
+    int              listen_fd;     /* per-worker on Linux, shared on macOS */
+    cerver_server_t *srv;
+    pthread_t        thread;
+} cerver_worker_t;
 
 /* ------------------------------------------------------------------ */
 /*  Server                                                            */
 /* ------------------------------------------------------------------ */
 
-typedef struct {
+struct cerver_server {
     int              port;
     int              sock_fd;
     cerver_route_t  *routes;
@@ -152,22 +212,23 @@ typedef struct {
     const char      *public_dir;   /* NULL if embedded mode */
     volatile int     running;
 
-    /* Thread pool */
-    int              thread_count;
-    pthread_t       *threads;
-    int              task_queue[CERVER_TASK_QUEUE_SIZE];
-    int              tq_head;
-    int              tq_tail;
-    int              tq_count;
-    pthread_mutex_t  tq_mutex;
-    pthread_cond_t   tq_cond;
-} cerver_server_t;
+    /* Generated dispatch override (faster than generic router) */
+    cerver_dispatch_fn dispatch_override;
+
+    /* Stat cache for filesystem serving */
+    cerver_stat_cache_t stat_cache;
+
+    /* Worker pool */
+    int              worker_count;
+    cerver_worker_t *workers;
+};
 
 /* Server lifecycle */
 int  cerver_init(cerver_server_t *srv, int port, int threads);
 int  cerver_add_routes(cerver_server_t *srv, cerver_route_t *routes, int count);
 int  cerver_set_assets(cerver_server_t *srv, cerver_asset_t *assets, int count);
 void cerver_set_public_dir(cerver_server_t *srv, const char *dir);
+void cerver_set_dispatch(cerver_server_t *srv, cerver_dispatch_fn fn);
 int  cerver_listen(cerver_server_t *srv);
 void cerver_shutdown(cerver_server_t *srv);
 
@@ -181,7 +242,7 @@ int cerver_parse_request(const char *raw, size_t len, cerver_request_t *req);
 /*  HTTP writer (internal)                                            */
 /* ------------------------------------------------------------------ */
 
-int cerver_write_response(int fd, const cerver_response_t *res);
+int cerver_write_response(int fd, const cerver_response_t *res, int keepalive);
 
 /* ------------------------------------------------------------------ */
 /*  Router (internal)                                                 */
@@ -202,5 +263,15 @@ const char *cerver_mime_from_path(const char *path);
 
 int cerver_serve_static(cerver_server_t *srv, cerver_request_t *req,
                         cerver_response_t *res);
+
+/* ------------------------------------------------------------------ */
+/*  Stat cache (internal)                                             */
+/* ------------------------------------------------------------------ */
+
+void cerver_stat_cache_init(cerver_stat_cache_t *cache);
+int  cerver_stat_cache_lookup(cerver_stat_cache_t *cache, const char *path,
+                              size_t *file_size);
+void cerver_stat_cache_store(cerver_stat_cache_t *cache, const char *path,
+                             size_t file_size, time_t mtime);
 
 #endif /* CERVER_H */
