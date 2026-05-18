@@ -1,8 +1,12 @@
+<div align="center">
+  <img src="templates/cerver.png" alt="Cerver Logo" width="120" />
+</div>
+
 # Cerver
 
 A lightweight, compile-time web framework that transpiles restricted JavaScript server logic into highly optimized native C HTTP server binaries.
 
-Cerver takes a Next.js-style file-based routing structure (written in a strict subset of JavaScript), parses it, generates equivalent C code, embeds your static assets, and compiles it all into a single, standalone executable (~50KB) that runs with zero Node.js dependency.
+Cerver takes a Next.js-style file-based routing structure (written in a strict subset of JavaScript), parses it, generates equivalent C code, embeds your static assets, and compiles it all into a single, standalone executable that runs with zero Node.js dependency.
 
 ## Features
 
