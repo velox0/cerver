@@ -16,7 +16,7 @@ Cerver takes a Next.js-style file-based routing structure (written in a strict s
 - **Microscopic Footprint**: Generated executables are tiny and start in milliseconds.
 - **Single-Binary Deployment**: Static assets (HTML, CSS, JS, images) are automatically minified and embedded directly into the executable as C byte arrays.
 - **Native Performance**: Uses `kqueue` (macOS) or `epoll` (Linux) event loops for high-performance non-blocking I/O.
-- **File-Based Routing**: Intuitive `app/routes/` directory structure, supporting dynamic segments (e.g., `/item/[id].js`).
+- **File-Based Routing**: Intuitive `routes/` directory structure, supporting dynamic segments (e.g., `/item/[id].js`).
 
 ## Benchmarks (Autocannon)
 
@@ -57,9 +57,9 @@ cerver run
 
 ## Routing
 
-Routes are defined in the `app/routes/` directory.
+Routes are defined in the `routes/` directory.
 
-`app/routes/index.js` (maps to `/`)
+`routes/index.js` (maps to `/`)
 
 ```javascript
 export function GET(req, res) {
@@ -67,7 +67,7 @@ export function GET(req, res) {
 }
 ```
 
-`app/routes/api/status.js` (maps to `/api/status`)
+`routes/api/status.js` (maps to `/api/status`)
 
 ```javascript
 export function GET(req, res) {
@@ -75,7 +75,7 @@ export function GET(req, res) {
 }
 ```
 
-`app/routes/users/[id].js` (maps to `/users/:id`)
+`routes/users/[id].js` (maps to `/users/:id`)
 
 ```javascript
 export function GET(req, res) {

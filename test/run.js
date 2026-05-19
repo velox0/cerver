@@ -52,7 +52,7 @@ function parseAndValidate(source, filename = "route.js") {
 test("discoverRoutes maps file routes and sorts dynamic routes last", () => {
   const dir = tempDir();
   try {
-    const routesDir = path.join(dir, "app", "routes");
+    const routesDir = path.join(dir, "routes");
     writeFile(path.join(routesDir, "index.js"), "export function GET(req, res) {}");
     writeFile(path.join(routesDir, "about.js"), "export function GET(req, res) {}");
     writeFile(path.join(routesDir, "blog", "index.js"), "export function GET(req, res) {}");
