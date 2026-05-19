@@ -2,10 +2,10 @@
 node_modules/
 build/
 dist/
+.github/
+test/
 *.o
 .DS_Store
-
-# Development files
 .clang-format
 
 # Development testing
