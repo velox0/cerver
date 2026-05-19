@@ -184,10 +184,10 @@ test("generateRouteTable emits forward declarations, entries, and count", () => 
   const code = generateRouteTable(routes);
 
   assert.match(code, /static void handle_GET_index\(cerver_request_t \*req, cerver_response_t \*res\);/);
-  assert.match(code, /static cerver_route_t cerver_routes\[\] = \{/);
+  assert.match(code, /cerver_route_t cerver_routes\[\] = \{/);
   assert.match(code, /\{ "GET", "\/", handle_GET_index \},/);
   assert.match(code, /\{ "POST", "\/users\/:id", handle_POST_users_id \},/);
-  assert.match(code, /static const int cerver_route_count = 2;/);
+  assert.match(code, /const int cerver_route_count = 2;/);
 });
 
 test("generateDispatch generates correct parameter extraction and termination", () => {
@@ -316,7 +316,7 @@ test("generateEmbeddedAssets emits C arrays and asset table entries", async () =
       code,
       /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, .* \},/
     );
-    assert.match(code, /static const int cerver_embedded_asset_count = 1;/);
+    assert.match(code, /const int cerver_embedded_asset_count = 1;/);
   } finally {
     cleanup(dir);
   }
