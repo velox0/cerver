@@ -17,7 +17,7 @@ const {
   handlerName,
 } = require("../lib/codegen/emit");
 const { generateRouteTable } = require("../lib/codegen/route_table");
-const { loadConfig } = require("../lib/config");
+const { loadConfig, findProjectRoot } = require("../lib/config");
 const IR = require("../lib/ir/types");
 const { transformFile } = require("../lib/ir/transform");
 const { discoverRoutes } = require("../lib/parser/discover");
@@ -226,6 +226,23 @@ test("loadConfig merges defaults and supports export default configs", () => {
     });
   } finally {
     cleanup(dir);
+  }
+});
+
+test("findProjectRoot traverses up and locates project root correctly", () => {
+  const rootDir = tempDir();
+  try {
+    const subDir = path.join(rootDir, "routes", "sub");
+    fs.mkdirSync(subDir, { recursive: true });
+
+    // With no configuration, findProjectRoot should return null
+    assert.equal(findProjectRoot(subDir), null);
+
+    // If cerver.config.js is in rootDir, it should find it
+    writeFile(path.join(rootDir, "cerver.config.js"), "module.exports = {};");
+    assert.equal(findProjectRoot(subDir), rootDir);
+  } finally {
+    cleanup(rootDir);
   }
 });
 
