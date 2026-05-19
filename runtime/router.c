@@ -108,9 +108,9 @@ int cerver_route_match(const cerver_route_t* route, cerver_request_t* req) {
   const char* pp = pattern; /* pattern pointer */
   const char* rp = path;    /* request path pointer */
 
-  int saved_params = req->params_count;
+  int   saved_params = req->params_count;
   char* param_slashes[CERVER_MAX_PARAMS];
-  int param_slash_count = 0;
+  int   param_slash_count = 0;
 
   /* Skip leading '/' */
   if (*pp == '/') pp++;
@@ -186,18 +186,18 @@ typedef struct trie_node trie_node_t;
 
 struct trie_node {
   char* segment;
-  int is_param;
+  int   is_param;
   char* param_name;
 
   struct {
-    const char* method;
+    const char*       method;
     cerver_handler_fn handler;
   } handlers[16];
   int handler_count;
 
   trie_node_t** children;
-  int children_count;
-  int children_cap;
+  int           children_count;
+  int           children_cap;
 };
 
 void* cerver_trie_create(void) {
@@ -210,17 +210,18 @@ static trie_node_t* trie_create_node(const char* segment, size_t len) {
   if (node && segment) {
     node->segment = trie_strndup(segment, len);
     if (node->segment[0] == ':') {
-      node->is_param = 1;
+      node->is_param   = 1;
       node->param_name = trie_strndup(node->segment + 1, len - 1);
     }
   }
   return node;
 }
 
-void cerver_trie_insert(void* trie, const char* pattern, const char* method, cerver_handler_fn handler) {
+void cerver_trie_insert(void* trie, const char* pattern, const char* method,
+                        cerver_handler_fn handler) {
   if (!trie) return;
   trie_node_t* curr = (trie_node_t*)trie;
-  const char* p = pattern;
+  const char*  p    = pattern;
   while (*p == '/') p++;
 
   while (*p) {
@@ -246,7 +247,7 @@ void cerver_trie_insert(void* trie, const char* pattern, const char* method, cer
       child = trie_create_node(seg_start, len);
       if (curr->children_count >= curr->children_cap) {
         curr->children_cap = curr->children_cap == 0 ? 4 : curr->children_cap * 2;
-        curr->children = realloc(curr->children, curr->children_cap * sizeof(trie_node_t*));
+        curr->children     = realloc(curr->children, curr->children_cap * sizeof(trie_node_t*));
       }
       curr->children[curr->children_count++] = child;
     }
@@ -257,7 +258,7 @@ void cerver_trie_insert(void* trie, const char* pattern, const char* method, cer
 
   // Add handler to leaf
   if (curr->handler_count < 16) {
-    curr->handlers[curr->handler_count].method = method;
+    curr->handlers[curr->handler_count].method  = method;
     curr->handlers[curr->handler_count].handler = handler;
     curr->handler_count++;
   }
@@ -275,7 +276,8 @@ void cerver_trie_free(void* trie) {
   free(node);
 }
 
-static int trie_match_recursive(trie_node_t* node, const char* path, cerver_request_t* req, cerver_handler_fn* out_handler, int param_start_idx) {
+static int trie_match_recursive(trie_node_t* node, const char* path, cerver_request_t* req,
+                                cerver_handler_fn* out_handler, int param_start_idx) {
   // Skip leading slashes
   while (*path == '/') path++;
 
@@ -283,7 +285,7 @@ static int trie_match_recursive(trie_node_t* node, const char* path, cerver_requ
     // Check if node has a handler for req->method
     for (int i = 0; i < node->handler_count; i++) {
       if (strcmp(node->handlers[i].method, req->method) == 0) {
-        *out_handler = node->handlers[i].handler;
+        *out_handler      = node->handlers[i].handler;
         req->params_count = param_start_idx;
         return 1;
       }
@@ -313,7 +315,7 @@ static int trie_match_recursive(trie_node_t* node, const char* path, cerver_requ
     trie_node_t* child = node->children[i];
     if (child->is_param) {
       if (param_start_idx < CERVER_MAX_PARAMS) {
-        req->params[param_start_idx].key = child->param_name;
+        req->params[param_start_idx].key   = child->param_name;
         req->params[param_start_idx].value = seg_start;
       }
       if (trie_match_recursive(child, path, req, out_handler, param_start_idx + 1)) {
@@ -340,7 +342,7 @@ cerver_handler_fn cerver_dispatch(cerver_server_t* srv, cerver_request_t* req) {
   if (!srv->route_trie) return NULL;
 
   cerver_handler_fn handler = NULL;
-  req->params_count = 0;
+  req->params_count         = 0;
   if (trie_match_recursive((trie_node_t*)srv->route_trie, req->path, req, &handler, 0)) {
     // NUL-terminate extracted values in-place inside req->path
     for (int i = 0; i < req->params_count; i++) {

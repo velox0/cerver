@@ -175,7 +175,8 @@ static int serve_embedded(cerver_server_t* srv, cerver_request_t* req, cerver_re
 
     uint32_t idx_hash = fnv1a(fallback_path);
     for (int i = 0; i < srv->asset_count; i++) {
-      if (fnv1a(srv->assets[i].path) == idx_hash && strcmp(srv->assets[i].path, fallback_path) == 0) {
+      if (fnv1a(srv->assets[i].path) == idx_hash &&
+          strcmp(srv->assets[i].path, fallback_path) == 0) {
         found = &srv->assets[i];
         break;
       }

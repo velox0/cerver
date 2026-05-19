@@ -25,7 +25,7 @@ static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count
 #include <sys/socket.h>
 static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
   off_t len = (off_t)count;
-  int res = sendfile(in_fd, out_fd, offset, &len, NULL, 0);
+  int   res = sendfile(in_fd, out_fd, offset, &len, NULL, 0);
   if (res == 0) {
     return (ssize_t)len;
   }
@@ -35,8 +35,8 @@ static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count
   /* Fallback to read-write copy if not a socket or unsupported on this descriptor type */
   char buf[8192];
   if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
-  size_t to_read = count > sizeof(buf) ? sizeof(buf) : count;
-  ssize_t n_read = read(in_fd, buf, to_read);
+  size_t  to_read = count > sizeof(buf) ? sizeof(buf) : count;
+  ssize_t n_read  = read(in_fd, buf, to_read);
   if (n_read <= 0) return n_read;
 
   size_t written = 0;
@@ -54,8 +54,8 @@ static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count
 static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
   char buf[8192];
   if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
-  size_t to_read = count > sizeof(buf) ? sizeof(buf) : count;
-  ssize_t n_read = read(in_fd, buf, to_read);
+  size_t  to_read = count > sizeof(buf) ? sizeof(buf) : count;
+  ssize_t n_read  = read(in_fd, buf, to_read);
   if (n_read <= 0) return n_read;
 
   size_t written = 0;
@@ -156,7 +156,7 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
    */
   if (res->_body_owned == 3) {
     /* Send header first */
-    size_t header_total = (size_t)hlen;
+    size_t header_total   = (size_t)hlen;
     size_t header_written = 0;
     while (header_written < header_total) {
       ssize_t n = write(fd, header + header_written, header_total - header_written);
@@ -169,7 +169,7 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
 
     /* Zero-copy body sending via sendfile(2) */
     size_t body_total = res->body_len;
-    size_t body_sent = 0;
+    size_t body_sent  = 0;
     while (body_sent < body_total) {
       ssize_t n = cerver_sendfile(fd, res->_file_fd, (off_t)body_sent, body_total - body_sent);
       if (n < 0) {
@@ -183,7 +183,7 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
     if ((size_t)hlen + res->body_len <= sizeof(header)) {
       /* Small response optimization: copy body into header buffer and send in one syscall */
       memcpy(header + hlen, res->body, res->body_len);
-      size_t total = (size_t)hlen + res->body_len;
+      size_t total   = (size_t)hlen + res->body_len;
       size_t written = 0;
       while (written < total) {
         ssize_t n = write(fd, header + written, total - written);

@@ -773,7 +773,7 @@ int cerver_listen(cerver_server_t* srv) {
 
   for (int i = 0; i < srv->route_count; i++) {
     const char* method = srv->routes[i].method;
-    const char* color = "\x1B[35m";
+    const char* color  = "\x1B[35m";
     if (strcmp(method, "GET") == 0) {
       color = "\x1B[32m";
     } else if (strcmp(method, "POST") == 0) {
