@@ -190,6 +190,17 @@ test("generateRouteTable emits forward declarations, entries, and count", () => 
   assert.match(code, /static const int cerver_route_count = 2;/);
 });
 
+test("generateDispatch generates correct parameter extraction and termination", () => {
+  const { generateDispatch } = require("../lib/codegen/dispatch_gen");
+  const routes = [
+    IR.IRRoute("GET", "/users/:id/profile", ["id"], IR.IRHandler([], [])),
+  ];
+  const code = generateDispatch(routes);
+  assert.match(code, /req->params\[req->params_count\]\.key = "id";/);
+  assert.match(code, /req->params\[req->params_count\]\.value = seg1_start;/);
+  assert.match(code, /\(\(char\*\)seg1_start\)\[seg1_len\] = '\\0';/);
+});
+
 test("loadConfig merges defaults and supports export default configs", () => {
   const dir = tempDir();
   try {

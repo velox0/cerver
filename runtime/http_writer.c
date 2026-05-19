@@ -12,6 +12,64 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/uio.h>
+#include <errno.h>
+
+#ifdef __linux__
+#include <sys/sendfile.h>
+static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
+  off_t off = offset;
+  return sendfile(out_fd, in_fd, &off, count);
+}
+#elif defined(__APPLE__)
+#include <sys/types.h>
+#include <sys/socket.h>
+static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
+  off_t len = (off_t)count;
+  int res = sendfile(in_fd, out_fd, offset, &len, NULL, 0);
+  if (res == 0) {
+    return (ssize_t)len;
+  }
+  if (len > 0) {
+    return (ssize_t)len;
+  }
+  /* Fallback to read-write copy if not a socket or unsupported on this descriptor type */
+  char buf[8192];
+  if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
+  size_t to_read = count > sizeof(buf) ? sizeof(buf) : count;
+  ssize_t n_read = read(in_fd, buf, to_read);
+  if (n_read <= 0) return n_read;
+
+  size_t written = 0;
+  while (written < (size_t)n_read) {
+    ssize_t n_write = write(out_fd, buf + written, (size_t)n_read - written);
+    if (n_write < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    written += (size_t)n_write;
+  }
+  return (ssize_t)written;
+}
+#else
+static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
+  char buf[8192];
+  if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
+  size_t to_read = count > sizeof(buf) ? sizeof(buf) : count;
+  ssize_t n_read = read(in_fd, buf, to_read);
+  if (n_read <= 0) return n_read;
+
+  size_t written = 0;
+  while (written < (size_t)n_read) {
+    ssize_t n_write = write(out_fd, buf + written, (size_t)n_read - written);
+    if (n_write < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    written += (size_t)n_write;
+  }
+  return (ssize_t)written;
+}
+#endif
 
 /* ------------------------------------------------------------------ */
 /*  Status text lookup                                                */
@@ -93,40 +151,89 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
   hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "\r\n");
 
   /*
-   * Use writev() to send header + body in a single syscall.
-   * This avoids Nagle interaction and reduces context switches.
+   * Use writev() or sendfile() to send response, or copy to contiguous
+   * buffer if body is small to avoid writev round-trips.
    */
-  if (res->body && res->body_len > 0) {
-    struct iovec iov[2];
-    iov[0].iov_base = header;
-    iov[0].iov_len  = (size_t)hlen;
-    iov[1].iov_base = (void*)res->body;
-    iov[1].iov_len  = res->body_len;
+  if (res->_body_owned == 3) {
+    /* Send header first */
+    size_t header_total = (size_t)hlen;
+    size_t header_written = 0;
+    while (header_written < header_total) {
+      ssize_t n = write(fd, header + header_written, header_total - header_written);
+      if (n < 0) {
+        if (errno == EINTR) continue;
+        return -1;
+      }
+      header_written += (size_t)n;
+    }
 
-    size_t total   = iov[0].iov_len + iov[1].iov_len;
-    size_t written = 0;
+    /* Zero-copy body sending via sendfile(2) */
+    size_t body_total = res->body_len;
+    size_t body_sent = 0;
+    while (body_sent < body_total) {
+      ssize_t n = cerver_sendfile(fd, res->_file_fd, (off_t)body_sent, body_total - body_sent);
+      if (n < 0) {
+        if (errno == EINTR) continue;
+        return -1;
+      }
+      if (n == 0) break; /* EOF */
+      body_sent += (size_t)n;
+    }
+  } else if (res->body && res->body_len > 0) {
+    if ((size_t)hlen + res->body_len <= sizeof(header)) {
+      /* Small response optimization: copy body into header buffer and send in one syscall */
+      memcpy(header + hlen, res->body, res->body_len);
+      size_t total = (size_t)hlen + res->body_len;
+      size_t written = 0;
+      while (written < total) {
+        ssize_t n = write(fd, header + written, total - written);
+        if (n < 0) {
+          if (errno == EINTR) continue;
+          return -1;
+        }
+        written += (size_t)n;
+      }
+    } else {
+      /* Large response: use writev to send header + body */
+      struct iovec iov[2];
+      iov[0].iov_base = header;
+      iov[0].iov_len  = (size_t)hlen;
+      iov[1].iov_base = (void*)res->body;
+      iov[1].iov_len  = res->body_len;
 
-    while (written < total) {
-      ssize_t n = writev(fd, iov, 2);
-      if (n < 0) return -1;
-      written += (size_t)n;
+      size_t total   = iov[0].iov_len + iov[1].iov_len;
+      size_t written = 0;
 
-      /* Adjust iov for partial writes */
-      size_t to_consume = (size_t)n;
-      if (to_consume < iov[0].iov_len) {
-        iov[0].iov_base = (char*)iov[0].iov_base + to_consume;
-        iov[0].iov_len -= to_consume;
-      } else {
-        to_consume -= iov[0].iov_len;
-        iov[0].iov_len  = 0;
-        iov[1].iov_base = (char*)iov[1].iov_base + to_consume;
-        iov[1].iov_len -= to_consume;
+      while (written < total) {
+        ssize_t n = writev(fd, iov, 2);
+        if (n < 0) return -1;
+        written += (size_t)n;
+
+        /* Adjust iov for partial writes */
+        size_t to_consume = (size_t)n;
+        if (to_consume < iov[0].iov_len) {
+          iov[0].iov_base = (char*)iov[0].iov_base + to_consume;
+          iov[0].iov_len -= to_consume;
+        } else {
+          to_consume -= iov[0].iov_len;
+          iov[0].iov_len  = 0;
+          iov[1].iov_base = (char*)iov[1].iov_base + to_consume;
+          iov[1].iov_len -= to_consume;
+        }
       }
     }
   } else {
     /* No body — just send header */
-    ssize_t written = write(fd, header, (size_t)hlen);
-    if (written < 0) return -1;
+    size_t total   = (size_t)hlen;
+    size_t written = 0;
+    while (written < total) {
+      ssize_t n = write(fd, header + written, total - written);
+      if (n < 0) {
+        if (errno == EINTR) continue;
+        return -1;
+      }
+      written += (size_t)n;
+    }
   }
 
   return 0;

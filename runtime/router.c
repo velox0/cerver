@@ -169,6 +169,166 @@ int cerver_route_match(const cerver_route_t* route, cerver_request_t* req) {
 /*  Dispatch: find and return the handler for a request               */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/*  Trie/Radix Route Router                                           */
+/* ------------------------------------------------------------------ */
+
+static char* trie_strndup(const char* s, size_t n) {
+  char* p = malloc(n + 1);
+  if (p) {
+    memcpy(p, s, n);
+    p[n] = '\0';
+  }
+  return p;
+}
+
+typedef struct trie_node trie_node_t;
+
+struct trie_node {
+  char* segment;
+  int is_param;
+  char* param_name;
+
+  struct {
+    const char* method;
+    cerver_handler_fn handler;
+  } handlers[16];
+  int handler_count;
+
+  trie_node_t** children;
+  int children_count;
+  int children_cap;
+};
+
+void* cerver_trie_create(void) {
+  trie_node_t* node = calloc(1, sizeof(trie_node_t));
+  return node;
+}
+
+static trie_node_t* trie_create_node(const char* segment, size_t len) {
+  trie_node_t* node = calloc(1, sizeof(trie_node_t));
+  if (node && segment) {
+    node->segment = trie_strndup(segment, len);
+    if (node->segment[0] == ':') {
+      node->is_param = 1;
+      node->param_name = trie_strndup(node->segment + 1, len - 1);
+    }
+  }
+  return node;
+}
+
+void cerver_trie_insert(void* trie, const char* pattern, const char* method, cerver_handler_fn handler) {
+  if (!trie) return;
+  trie_node_t* curr = (trie_node_t*)trie;
+  const char* p = pattern;
+  while (*p == '/') p++;
+
+  while (*p) {
+    const char* seg_start = p;
+    while (*p && *p != '/') p++;
+    size_t len = (size_t)(p - seg_start);
+    if (len == 0) {
+      while (*p == '/') p++;
+      continue;
+    }
+
+    // Find if child exists
+    trie_node_t* child = NULL;
+    for (int i = 0; i < curr->children_count; i++) {
+      trie_node_t* c = curr->children[i];
+      if (strlen(c->segment) == len && memcmp(c->segment, seg_start, len) == 0) {
+        child = c;
+        break;
+      }
+    }
+
+    if (!child) {
+      child = trie_create_node(seg_start, len);
+      if (curr->children_count >= curr->children_cap) {
+        curr->children_cap = curr->children_cap == 0 ? 4 : curr->children_cap * 2;
+        curr->children = realloc(curr->children, curr->children_cap * sizeof(trie_node_t*));
+      }
+      curr->children[curr->children_count++] = child;
+    }
+
+    curr = child;
+    while (*p == '/') p++;
+  }
+
+  // Add handler to leaf
+  if (curr->handler_count < 16) {
+    curr->handlers[curr->handler_count].method = method;
+    curr->handlers[curr->handler_count].handler = handler;
+    curr->handler_count++;
+  }
+}
+
+void cerver_trie_free(void* trie) {
+  if (!trie) return;
+  trie_node_t* node = (trie_node_t*)trie;
+  for (int i = 0; i < node->children_count; i++) {
+    cerver_trie_free(node->children[i]);
+  }
+  free(node->children);
+  free(node->segment);
+  free(node->param_name);
+  free(node);
+}
+
+static int trie_match_recursive(trie_node_t* node, const char* path, cerver_request_t* req, cerver_handler_fn* out_handler, int param_start_idx) {
+  // Skip leading slashes
+  while (*path == '/') path++;
+
+  if (*path == '\0') {
+    // Check if node has a handler for req->method
+    for (int i = 0; i < node->handler_count; i++) {
+      if (strcmp(node->handlers[i].method, req->method) == 0) {
+        *out_handler = node->handlers[i].handler;
+        req->params_count = param_start_idx;
+        return 1;
+      }
+    }
+    return 0;
+  }
+
+  // Extract next segment from path
+  const char* seg_start = path;
+  while (*path && *path != '/') path++;
+  size_t seg_len = (size_t)(path - seg_start);
+
+  // Try static children first
+  for (int i = 0; i < node->children_count; i++) {
+    trie_node_t* child = node->children[i];
+    if (!child->is_param) {
+      if (strlen(child->segment) == seg_len && memcmp(child->segment, seg_start, seg_len) == 0) {
+        if (trie_match_recursive(child, path, req, out_handler, param_start_idx)) {
+          return 1;
+        }
+      }
+    }
+  }
+
+  // Try parameter/dynamic children next
+  for (int i = 0; i < node->children_count; i++) {
+    trie_node_t* child = node->children[i];
+    if (child->is_param) {
+      if (param_start_idx < CERVER_MAX_PARAMS) {
+        req->params[param_start_idx].key = child->param_name;
+        req->params[param_start_idx].value = seg_start;
+      }
+      if (trie_match_recursive(child, path, req, out_handler, param_start_idx + 1)) {
+        return 1;
+      }
+    }
+  }
+
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Dispatch: find and return the handler for a request               */
+/* ------------------------------------------------------------------ */
+
 cerver_handler_fn cerver_dispatch(cerver_server_t* srv, cerver_request_t* req) {
   /* Try the generated compile-time dispatch first */
   if (srv->dispatch_override) {
@@ -176,13 +336,19 @@ cerver_handler_fn cerver_dispatch(cerver_server_t* srv, cerver_request_t* req) {
     if (h) return h;
   }
 
-  /* Fall back to generic route table scan */
-  if (!srv->routes) return NULL;
+  /* Fall back to generic route table scan via Trie */
+  if (!srv->route_trie) return NULL;
 
-  for (int i = 0; i < srv->route_count; i++) {
-    if (cerver_route_match(&srv->routes[i], req)) {
-      return srv->routes[i].handler;
+  cerver_handler_fn handler = NULL;
+  req->params_count = 0;
+  if (trie_match_recursive((trie_node_t*)srv->route_trie, req->path, req, &handler, 0)) {
+    // NUL-terminate extracted values in-place inside req->path
+    for (int i = 0; i < req->params_count; i++) {
+      char* val = (char*)req->params[i].value;
+      while (*val && *val != '/') val++;
+      if (*val == '/') *val = '\0';
     }
+    return handler;
   }
 
   return NULL;

@@ -119,6 +119,9 @@ typedef struct {
 
   /* Keep-alive control: set to 1 to force close after response */
   int _force_close;
+
+  /* Internal file descriptor for sendfile serving */
+  int _file_fd;
 } cerver_response_t;
 
 /* Response helpers — called by generated handler code */
@@ -233,6 +236,9 @@ struct cerver_server {
   /* Worker pool */
   int              worker_count;
   cerver_worker_t* workers;
+
+  /* Route trie for radix/trie-based routing */
+  void*            route_trie;
 };
 
 /* Server lifecycle */
@@ -262,6 +268,9 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive);
 
 int               cerver_route_match(const cerver_route_t* route, cerver_request_t* req);
 cerver_handler_fn cerver_dispatch(cerver_server_t* srv, cerver_request_t* req);
+void*             cerver_trie_create(void);
+void              cerver_trie_insert(void* trie, const char* pattern, const char* method, cerver_handler_fn handler);
+void              cerver_trie_free(void* trie);
 
 /* ------------------------------------------------------------------ */
 /*  MIME (internal)                                                   */

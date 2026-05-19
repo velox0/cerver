@@ -189,59 +189,19 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
   const char* mime = cerver_mime_from_path(full_path);
 
   /*
-   * Use mmap for zero-copy serving instead of fopen+malloc+fread.
-   * The mmap'd region is used directly as the response body.
-   * We mark it as _body_owned=0 since munmap needs special handling,
-   * but for simplicity we'll use read() for small files and mmap for large.
+   * Use sendfile for zero-copy filesystem static serving.
+   * The file is opened and its descriptor is stored in the response structure
+   * for streaming directly to the client socket in the writer.
    */
-  if (file_size > 65536) {
-    /* Large files: mmap for zero-copy */
-    int fd = open(full_path, O_RDONLY);
-    if (fd < 0) return -1;
+  int fd = open(full_path, O_RDONLY);
+  if (fd < 0) return -1;
 
-    void* mapped = mmap(NULL, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
-    close(fd);
-
-    if (mapped == MAP_FAILED) return -1;
-
-    /* Advise the kernel we'll read sequentially */
-    madvise(mapped, file_size, MADV_SEQUENTIAL);
-
-    res->status       = 200;
-    res->content_type = mime;
-    res->body         = (const char*)mapped;
-    res->body_len     = file_size;
-    res->_body_owned  = 2; /* Special flag: needs munmap, not free */
-  } else {
-    /* Small files: read into buffer (avoids mmap overhead) */
-    int fd = open(full_path, O_RDONLY);
-    if (fd < 0) return -1;
-
-    char* file_data = malloc(file_size);
-    if (!file_data) {
-      close(fd);
-      return -1;
-    }
-
-    size_t total = 0;
-    while (total < file_size) {
-      ssize_t n = read(fd, file_data + total, file_size - total);
-      if (n <= 0) break;
-      total += (size_t)n;
-    }
-    close(fd);
-
-    if (total != file_size) {
-      free(file_data);
-      return -1;
-    }
-
-    res->status       = 200;
-    res->content_type = mime;
-    res->body         = file_data;
-    res->body_len     = file_size;
-    res->_body_owned  = 1; /* malloc'd */
-  }
+  res->status       = 200;
+  res->content_type = mime;
+  res->body         = NULL;
+  res->body_len     = file_size;
+  res->_body_owned  = 3; /* Special flag: sendfile, close fd */
+  res->_file_fd     = fd;
 
   add_cache_headers(res, path);
 

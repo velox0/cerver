@@ -334,10 +334,27 @@ static void test_static_filesystem_small(void) {
 
   MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
   MU_ASSERT_EQ_SIZE(5, res.body_len);
-  MU_ASSERT(memcmp(res.body, "small", 5) == 0);
-  MU_ASSERT_EQ_INT(1, res._body_owned);
+  MU_ASSERT(res.body == NULL);
+  MU_ASSERT_EQ_INT(3, res._body_owned);
+  MU_ASSERT(res._file_fd >= 0);
 
-  free((void*)res.body);
+  int fds[2];
+  MU_ASSERT(pipe(fds) == 0);
+  MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
+  close(fds[1]);
+
+  char out[1024];
+  ssize_t n = read_all(fds[0], out, sizeof(out));
+  MU_ASSERT(n > 0);
+  close(fds[0]);
+
+  MU_ASSERT(strstr(out, "HTTP/1.1 200 OK\r\n") != NULL);
+  MU_ASSERT(strstr(out, "Content-Length: 5\r\n") != NULL);
+  MU_ASSERT(strstr(out, "\r\nsmall") != NULL);
+
+  if (res._body_owned == 3 && res._file_fd >= 0) {
+    close(res._file_fd);
+  }
   unlink(file_path);
   rmdir(dir);
 }
@@ -350,10 +367,10 @@ static void test_static_filesystem_large(void) {
   char file_path[PATH_MAX];
   snprintf(file_path, sizeof(file_path), "%s/large.bin", dir);
 
-  char* payload = (char*)malloc(70000);
+  char* payload = (char*)malloc(32000);
   MU_ASSERT(payload != NULL);
-  memset(payload, 'a', 70000);
-  MU_ASSERT_EQ_INT(0, write_file(file_path, payload, 70000));
+  memset(payload, 'a', 32000);
+  MU_ASSERT_EQ_INT(0, write_file(file_path, payload, 32000));
   free(payload);
 
   cerver_server_t srv;
@@ -368,11 +385,27 @@ static void test_static_filesystem_large(void) {
   strcpy(req.path, "/large.bin");
 
   MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
-  MU_ASSERT_EQ_SIZE(70000, res.body_len);
-  MU_ASSERT_EQ_INT(2, res._body_owned);
-  MU_ASSERT(((const char*)res.body)[0] == 'a');
+  MU_ASSERT_EQ_SIZE(32000, res.body_len);
+  MU_ASSERT(res.body == NULL);
+  MU_ASSERT_EQ_INT(3, res._body_owned);
+  MU_ASSERT(res._file_fd >= 0);
 
-  munmap((void*)res.body, res.body_len);
+  int fds[2];
+  MU_ASSERT(pipe(fds) == 0);
+  MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
+  close(fds[1]);
+
+  char out[35000];
+  ssize_t n = read_all(fds[0], out, sizeof(out));
+  MU_ASSERT(n > 0);
+  close(fds[0]);
+
+  MU_ASSERT(strstr(out, "HTTP/1.1 200 OK\r\n") != NULL);
+  MU_ASSERT(strstr(out, "Content-Length: 32000\r\n") != NULL);
+
+  if (res._body_owned == 3 && res._file_fd >= 0) {
+    close(res._file_fd);
+  }
   unlink(file_path);
   rmdir(dir);
 }

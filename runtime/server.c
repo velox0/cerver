@@ -278,6 +278,8 @@ static void handle_connection(cerver_server_t* srv, int client_fd) {
       free((void*)res.body);
     else if (res._body_owned == 2 && res.body)
       munmap((void*)res.body, res.body_len);
+    else if (res._body_owned == 3 && res._file_fd >= 0)
+      close(res._file_fd);
 
     free(buf);
     if (write_err < 0) break;
@@ -348,7 +350,7 @@ static int create_listener(int port, int reuseport) {
   int opt = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
   if (reuseport) setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #else
   (void)reuseport;
@@ -621,6 +623,13 @@ int cerver_init(cerver_server_t* srv, int port, int threads) {
 int cerver_add_routes(cerver_server_t* srv, cerver_route_t* routes, int count) {
   srv->routes      = routes;
   srv->route_count = count;
+
+  srv->route_trie = cerver_trie_create();
+  if (srv->route_trie) {
+    for (int i = 0; i < count; i++) {
+      cerver_trie_insert(srv->route_trie, routes[i].pattern, routes[i].method, routes[i].handler);
+    }
+  }
   return 0;
 }
 
@@ -702,7 +711,7 @@ int cerver_listen(cerver_server_t* srv) {
     return -1;
   }
 
-  srv->sock_fd = create_listener(srv->port, 0);
+  srv->sock_fd = create_listener(srv->port, 1);
   if (srv->sock_fd < 0) {
     srv->running = 0;
     for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
@@ -730,9 +739,13 @@ int cerver_listen(cerver_server_t* srv) {
     w->id              = i;
     w->srv             = srv;
     w->event_fd        = -1;
-#ifdef __linux__
-    w->listen_fd = create_listener(srv->port, 1);
-    if (w->listen_fd < 0) w->listen_fd = srv->sock_fd;
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+    if (i == 0) {
+      w->listen_fd = srv->sock_fd;
+    } else {
+      w->listen_fd = create_listener(srv->port, 1);
+      if (w->listen_fd < 0) w->listen_fd = srv->sock_fd;
+    }
 #else
     w->listen_fd = srv->sock_fd;
 #endif
@@ -791,7 +804,7 @@ void cerver_shutdown(cerver_server_t* srv) {
 
   if (srv->workers) {
     for (int i = 0; i < srv->worker_count; i++) {
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
       if (srv->workers[i].listen_fd != srv->sock_fd && srv->workers[i].listen_fd >= 0)
         close(srv->workers[i].listen_fd);
 #endif
@@ -799,6 +812,11 @@ void cerver_shutdown(cerver_server_t* srv) {
     }
     free(srv->workers);
     srv->workers = NULL;
+  }
+
+  if (srv->route_trie) {
+    cerver_trie_free(srv->route_trie);
+    srv->route_trie = NULL;
   }
 
   if (srv->sock_fd >= 0) {
