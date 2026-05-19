@@ -84,6 +84,16 @@ export function GET(req, res) {
 }
 ```
 
+### Clean URL Asset Mapping
+
+Cerver has a special asset routing convention that prevents folder clutter:
+- **Root Index**: `public/index.html` is automatically served at the root `/`.
+- **Directory Indexing**: Nested `index.html` files inside directories (e.g. `public/page/index.html`) are **not** implicitly aliased to `/page` (they remain at `/page/index.html`).
+- **Clean Folder Slugs**: If an HTML file has the exact same name as its parent directory, it is mapped to the clean directory URL. For example:
+  - `public/about/about.html` maps to `/about` (and `/about/`)
+  - `public/blog/posts/posts.html` maps to `/blog/posts` (and `/blog/posts/`)
+- **Other Static Assets**: All other assets like CSS, JS, images, and non-directory-matching HTML files serve directly at their file paths (e.g., `public/about/style.css` maps to `/about/style.css`).
+
 ## The Request & Response Objects
 
 Because Cerver compiles to C, the API surface is restricted.

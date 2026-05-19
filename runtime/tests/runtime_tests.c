@@ -288,9 +288,9 @@ static void test_static_embedded_index_fallback(void) {
   cerver_server_t srv;
   cerver_init(&srv, 8080, 1);
 
-  static const unsigned char data[] = "docs";
+  static const unsigned char data[] = "about";
   cerver_asset_t             assets[1];
-  assets[0].path        = "/docs/docs.html";
+  assets[0].path        = "/about/about.html";
   assets[0].mime_type   = "text/html";
   assets[0].data        = data;
   assets[0].data_len    = sizeof(data) - 1;
@@ -305,7 +305,7 @@ static void test_static_embedded_index_fallback(void) {
   memset(&req, 0, sizeof(req));
   memset(&res, 0, sizeof(res));
   strcpy(req.method, "GET");
-  strcpy(req.path, "/docs/");
+  strcpy(req.path, "/about/");
 
   MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
   MU_ASSERT(res.body == (const char*)data);
@@ -331,7 +331,8 @@ static void test_static_filesystem_directory_fallback(void) {
   snprintf(file_path2, sizeof(file_path2), "%s/about/about.html", dir);
   MU_ASSERT_EQ_INT(0, write_file(file_path2, "about content", 13));
 
-  /* Create public/about/index.html (should NOT map to /about, since index.html under subdirectory doesn't alias) */
+  /* Create public/about/index.html (should NOT map to /about, since index.html under subdirectory
+   * doesn't alias) */
   char file_path3[PATH_MAX];
   snprintf(file_path3, sizeof(file_path3), "%s/about/index.html", dir);
   MU_ASSERT_EQ_INT(0, write_file(file_path3, "about index", 11));
@@ -420,7 +421,7 @@ static void test_static_filesystem_small(void) {
   MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
   close(fds[1]);
 
-  char out[1024];
+  char    out[1024];
   ssize_t n = read_all(fds[0], out, sizeof(out));
   MU_ASSERT(n > 0);
   close(fds[0]);
@@ -472,7 +473,7 @@ static void test_static_filesystem_large(void) {
   MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
   close(fds[1]);
 
-  char out[35000];
+  char    out[35000];
   ssize_t n = read_all(fds[0], out, sizeof(out));
   MU_ASSERT(n > 0);
   close(fds[0]);
