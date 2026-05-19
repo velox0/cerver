@@ -112,15 +112,15 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
       written += (size_t)n;
 
       /* Adjust iov for partial writes */
-      if (written < iov[0].iov_len) {
-        iov[0].iov_base = header + written;
-        iov[0].iov_len -= (size_t)n;
+      size_t to_consume = (size_t)n;
+      if (to_consume < iov[0].iov_len) {
+        iov[0].iov_base = (char*)iov[0].iov_base + to_consume;
+        iov[0].iov_len -= to_consume;
       } else {
-        /* Header fully sent, adjust body iov */
-        size_t body_sent = written - (size_t)hlen;
-        iov[0].iov_len   = 0;
-        iov[1].iov_base  = (void*)(res->body + body_sent);
-        iov[1].iov_len   = res->body_len - body_sent;
+        to_consume -= iov[0].iov_len;
+        iov[0].iov_len  = 0;
+        iov[1].iov_base = (char*)iov[1].iov_base + to_consume;
+        iov[1].iov_len -= to_consume;
       }
     }
   } else {

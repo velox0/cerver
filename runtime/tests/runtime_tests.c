@@ -224,6 +224,22 @@ static void test_route_match_mismatch_resets_params(void) {
   MU_ASSERT_EQ_INT(0, req.params_count);
 }
 
+static void test_route_match_multi_segment(void) {
+  cerver_route_t route;
+  route.method  = "GET";
+  route.pattern = "/users/:id/profile";
+  route.handler = handler_a;
+
+  cerver_request_t req;
+  memset(&req, 0, sizeof(req));
+  strcpy(req.method, "GET");
+  strcpy(req.path, "/users/123/profile");
+
+  MU_ASSERT(cerver_route_match(&route, &req) == 1);
+  MU_ASSERT_EQ_INT(1, req.params_count);
+  MU_ASSERT_STREQ("123", cerver_req_param(&req, "id"));
+}
+
 static void test_request_header_helpers(void) {
   cerver_request_t req;
   memset(&req, 0, sizeof(req));
@@ -402,6 +418,7 @@ int main(void) {
   mu_run("write_response_force_close", test_write_response_force_close);
   mu_run("route_match_and_dispatch", test_route_match_and_dispatch);
   mu_run("route_match_mismatch_resets_params", test_route_match_mismatch_resets_params);
+  mu_run("route_match_multi_segment", test_route_match_multi_segment);
   mu_run("request_header_helpers", test_request_header_helpers);
   mu_run("static_embedded_prefers_br", test_static_embedded_prefers_br);
   mu_run("static_embedded_index_fallback", test_static_embedded_index_fallback);

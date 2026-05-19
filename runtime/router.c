@@ -19,8 +19,15 @@
 
 const char* cerver_req_param(const cerver_request_t* req, const char* key) {
   for (int i = 0; i < req->params_count; i++) {
-    if (strcmp(req->params[i].key, key) == 0) {
-      return req->params[i].value;
+    const char* pkey = req->params[i].key;
+    if (pkey && pkey[0] == key[0]) {
+      int j = 0;
+      while (key[j] && pkey[j] == key[j]) {
+        j++;
+      }
+      if (key[j] == '\0' && (pkey[j] == '\0' || pkey[j] == '/')) {
+        return req->params[i].value;
+      }
     }
   }
   return "";
@@ -102,6 +109,8 @@ int cerver_route_match(const cerver_route_t* route, cerver_request_t* req) {
   const char* rp = path;    /* request path pointer */
 
   int saved_params = req->params_count;
+  char* param_slashes[CERVER_MAX_PARAMS];
+  int param_slash_count = 0;
 
   /* Skip leading '/' */
   if (*pp == '/') pp++;
@@ -122,10 +131,12 @@ int cerver_route_match(const cerver_route_t* route, cerver_request_t* req) {
       /* Dynamic segment — extract parameter */
       if (req->params_count < CERVER_MAX_PARAMS) {
         req->params[req->params_count].key = pp_seg + 1;
-        /* Temporarily NUL-terminate the key at the slash */
-        /* The key points into the route pattern (static/const) */
+        /* The key points into the route pattern (static/const, not NUL-terminated) */
         req->params[req->params_count].value = rp_seg;
         req->params_count++;
+        if (*rp == '/') {
+          param_slashes[param_slash_count++] = (char*)rp;
+        }
       }
     } else {
       /* Static segment — must match exactly */
@@ -144,6 +155,11 @@ int cerver_route_match(const cerver_route_t* route, cerver_request_t* req) {
   if (*pp || *rp) {
     req->params_count = saved_params;
     return 0;
+  }
+
+  /* Match succeeded, NUL-terminate extracted values in-place inside req->path */
+  for (int i = 0; i < param_slash_count; i++) {
+    *param_slashes[i] = '\0';
   }
 
   return 1;
