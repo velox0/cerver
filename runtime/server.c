@@ -771,6 +771,22 @@ int cerver_listen(cerver_server_t* srv) {
   printf("cerver: %d acceptor(s), %d connection workers, keep-alive max %d req/conn\n",
          acceptor_count, pool_size, CERVER_KEEPALIVE_MAX);
 
+  for (int i = 0; i < srv->route_count; i++) {
+    const char* method = srv->routes[i].method;
+    const char* color = "\x1B[35m";
+    if (strcmp(method, "GET") == 0) {
+      color = "\x1B[32m";
+    } else if (strcmp(method, "POST") == 0) {
+      color = "\x1B[33m";
+    } else if (strcmp(method, "PUT") == 0) {
+      color = "\x1B[36m";
+    } else if (strcmp(method, "DELETE") == 0) {
+      color = "\x1B[31m";
+    }
+    printf("  → Mapped {%s, %s%s\x1B[0m} route\n", srv->routes[i].pattern, color, method);
+  }
+  fflush(stdout);
+
   release_acceptors();
 
   pthread_attr_destroy(&attr);
