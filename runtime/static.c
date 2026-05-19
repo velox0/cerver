@@ -86,6 +86,64 @@ static void add_cache_headers(cerver_response_t* res, const char* path) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Helper to resolve fallback paths for directory/clean-URL routes.  */
+/*  - "/" -> "/index.html"                                            */
+/*  - "/page" or "/page/" -> "/page/page.html"                        */
+/* ------------------------------------------------------------------ */
+
+static void get_fallback_path(const char* path, char* out, size_t out_len) {
+  if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
+    snprintf(out, out_len, "/index.html");
+    return;
+  }
+
+  size_t len = strlen(path);
+  while (len > 0 && path[len - 1] == '/') {
+    len--;
+  }
+
+  if (len == 0) {
+    snprintf(out, out_len, "/index.html");
+    return;
+  }
+
+  int last_slash = -1;
+  for (int i = (int)len - 1; i >= 0; i--) {
+    if (path[i] == '/') {
+      last_slash = i;
+      break;
+    }
+  }
+
+  size_t segment_len = len - (last_slash + 1);
+  if (segment_len == 0) {
+    snprintf(out, out_len, "/index.html");
+    return;
+  }
+
+  /* Extract the prefix and segment safely */
+  char prefix[1024];
+  if (len < sizeof(prefix)) {
+    memcpy(prefix, path, len);
+    prefix[len] = '\0';
+  } else {
+    snprintf(out, out_len, "/index.html");
+    return;
+  }
+
+  char segment[256];
+  if (segment_len < sizeof(segment)) {
+    memcpy(segment, path + last_slash + 1, segment_len);
+    segment[segment_len] = '\0';
+  } else {
+    snprintf(out, out_len, "/index.html");
+    return;
+  }
+
+  snprintf(out, out_len, "%s/%s.html", prefix, segment);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Serve from embedded assets — hash-accelerated lookup              */
 /* ------------------------------------------------------------------ */
 
@@ -110,19 +168,14 @@ static int serve_embedded(cerver_server_t* srv, cerver_request_t* req, cerver_re
     }
   }
 
-  /* Try with /index.html appended (for directory-like paths) */
+  /* Try with fallback path (for directory-like paths) */
   if (!found) {
-    char   index_path[CERVER_MAX_PATH];
-    size_t plen = strlen(path);
-    if (plen > 0 && path[plen - 1] == '/') {
-      snprintf(index_path, sizeof(index_path), "%sindex.html", path);
-    } else {
-      snprintf(index_path, sizeof(index_path), "%s/index.html", path);
-    }
+    char fallback_path[CERVER_MAX_PATH];
+    get_fallback_path(path, fallback_path, sizeof(fallback_path));
 
-    uint32_t idx_hash = fnv1a(index_path);
+    uint32_t idx_hash = fnv1a(fallback_path);
     for (int i = 0; i < srv->asset_count; i++) {
-      if (fnv1a(srv->assets[i].path) == idx_hash && strcmp(srv->assets[i].path, index_path) == 0) {
+      if (fnv1a(srv->assets[i].path) == idx_hash && strcmp(srv->assets[i].path, fallback_path) == 0) {
         found = &srv->assets[i];
         break;
       }
@@ -168,10 +221,12 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
   char full_path[CERVER_MAX_PATH * 2];
   snprintf(full_path, sizeof(full_path), "%s%s", srv->public_dir, path);
 
-  /* Check if it's a directory — try index.html */
+  /* Check if it's a directory — try fallback path */
   struct stat st;
   if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-    snprintf(full_path, sizeof(full_path), "%s%s/index.html", srv->public_dir, path);
+    char fallback_path[CERVER_MAX_PATH];
+    get_fallback_path(path, fallback_path, sizeof(fallback_path));
+    snprintf(full_path, sizeof(full_path), "%s%s", srv->public_dir, fallback_path);
     if (stat(full_path, &st) != 0) return -1;
   }
 

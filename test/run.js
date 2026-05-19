@@ -363,6 +363,46 @@ test("generateEmbeddedAssets can emit gzip variants for compressible assets", as
   }
 });
 
+test("generateEmbeddedAssets maps aliases according to the new convention", async () => {
+  const dir = tempDir();
+  try {
+    const assets = [
+      { filePath: path.join(dir, "public", "index.html"), servePath: "/index.html", ext: ".html" },
+      { filePath: path.join(dir, "public", "abcd", "index.html"), servePath: "/abcd/index.html", ext: ".html" },
+      { filePath: path.join(dir, "public", "page", "page.html"), servePath: "/page/page.html", ext: ".html" },
+      { filePath: path.join(dir, "public", "foo", "bar", "bar.html"), servePath: "/foo/bar/bar.html", ext: ".html" },
+      { filePath: path.join(dir, "public", "foo", "bar", "baz.html"), servePath: "/foo/bar/baz.html", ext: ".html" }
+    ];
+
+    for (const a of assets) {
+      writeFile(a.filePath, `content for ${a.servePath}`);
+    }
+
+    const code = await generateEmbeddedAssets(assets, false);
+
+    // /index.html should alias to /
+    assert.match(code, /\{ "\/", "text\/html; charset=utf-8", asset_index_html, asset_index_html_len, .* \},/);
+    
+    // /abcd/index.html should NOT alias to /abcd
+    assert.doesNotMatch(code, /\{ "\/abcd", "text\/html; charset=utf-8", asset_abcd_index_html, asset_abcd_index_html_len, .* \},/);
+    // but the original should be there
+    assert.match(code, /\{ "\/abcd\/index\.html", "text\/html; charset=utf-8", asset_abcd_index_html, asset_abcd_index_html_len, .* \},/);
+
+    // /page/page.html should alias to /page
+    assert.match(code, /\{ "\/page", "text\/html; charset=utf-8", asset_page_page_html, asset_page_page_html_len, .* \},/);
+    // and the original should be there
+    assert.match(code, /\{ "\/page\/page\.html", "text\/html; charset=utf-8", asset_page_page_html, asset_page_page_html_len, .* \},/);
+
+    // /foo/bar/bar.html should alias to /foo/bar
+    assert.match(code, /\{ "\/foo\/bar", "text\/html; charset=utf-8", asset_foo_bar_bar_html, asset_foo_bar_bar_html_len, .* \},/);
+
+    // /foo/bar/baz.html should NOT alias to /foo/bar/baz (since it's baz.html in bar/)
+    assert.doesNotMatch(code, /\{ "\/foo\/bar\/baz", "text\/html; charset=utf-8", asset_foo_bar_baz_html, .* \},/);
+  } finally {
+    cleanup(dir);
+  }
+});
+
 (async () => {
   let passed = 0;
 

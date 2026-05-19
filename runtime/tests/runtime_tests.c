@@ -290,7 +290,7 @@ static void test_static_embedded_index_fallback(void) {
 
   static const unsigned char data[] = "docs";
   cerver_asset_t             assets[1];
-  assets[0].path        = "/docs/index.html";
+  assets[0].path        = "/docs/docs.html";
   assets[0].mime_type   = "text/html";
   assets[0].data        = data;
   assets[0].data_len    = sizeof(data) - 1;
@@ -310,6 +310,83 @@ static void test_static_embedded_index_fallback(void) {
   MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
   MU_ASSERT(res.body == (const char*)data);
   MU_ASSERT_STREQ("text/html", res.content_type);
+}
+
+static void test_static_filesystem_directory_fallback(void) {
+  char  dir_template[] = "/tmp/cerver-test-XXXXXX";
+  char* dir            = mkdtemp(dir_template);
+  MU_ASSERT(dir != NULL);
+
+  /* Create public/index.html (maps to /) */
+  char file_path[PATH_MAX];
+  snprintf(file_path, sizeof(file_path), "%s/index.html", dir);
+  MU_ASSERT_EQ_INT(0, write_file(file_path, "root index", 10));
+
+  /* Create public/about/about.html (maps to /about or /about/) */
+  char sub_dir[PATH_MAX];
+  snprintf(sub_dir, sizeof(sub_dir), "%s/about", dir);
+  MU_ASSERT_EQ_INT(0, mkdir(sub_dir, 0700));
+
+  char file_path2[PATH_MAX];
+  snprintf(file_path2, sizeof(file_path2), "%s/about/about.html", dir);
+  MU_ASSERT_EQ_INT(0, write_file(file_path2, "about content", 13));
+
+  /* Create public/about/index.html (should NOT map to /about, since index.html under subdirectory doesn't alias) */
+  char file_path3[PATH_MAX];
+  snprintf(file_path3, sizeof(file_path3), "%s/about/index.html", dir);
+  MU_ASSERT_EQ_INT(0, write_file(file_path3, "about index", 11));
+
+  cerver_server_t srv;
+  cerver_init(&srv, 8080, 1);
+  cerver_set_public_dir(&srv, dir);
+
+  /* Test / -> index.html fallback */
+  {
+    cerver_request_t  req;
+    cerver_response_t res;
+    memset(&req, 0, sizeof(req));
+    memset(&res, 0, sizeof(res));
+    strcpy(req.method, "GET");
+    strcpy(req.path, "/");
+
+    MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
+    MU_ASSERT_EQ_SIZE(10, res.body_len);
+    if (res._body_owned == 3 && res._file_fd >= 0) close(res._file_fd);
+  }
+
+  /* Test /about -> about/about.html fallback */
+  {
+    cerver_request_t  req;
+    cerver_response_t res;
+    memset(&req, 0, sizeof(req));
+    memset(&res, 0, sizeof(res));
+    strcpy(req.method, "GET");
+    strcpy(req.path, "/about");
+
+    MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
+    MU_ASSERT_EQ_SIZE(13, res.body_len);
+    if (res._body_owned == 3 && res._file_fd >= 0) close(res._file_fd);
+  }
+
+  /* Test /about/ -> about/about.html fallback */
+  {
+    cerver_request_t  req;
+    cerver_response_t res;
+    memset(&req, 0, sizeof(req));
+    memset(&res, 0, sizeof(res));
+    strcpy(req.method, "GET");
+    strcpy(req.path, "/about/");
+
+    MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
+    MU_ASSERT_EQ_SIZE(13, res.body_len);
+    if (res._body_owned == 3 && res._file_fd >= 0) close(res._file_fd);
+  }
+
+  unlink(file_path);
+  unlink(file_path2);
+  unlink(file_path3);
+  rmdir(sub_dir);
+  rmdir(dir);
 }
 
 static void test_static_filesystem_small(void) {
@@ -457,6 +534,7 @@ int main(void) {
   mu_run("static_embedded_index_fallback", test_static_embedded_index_fallback);
   mu_run("static_filesystem_small", test_static_filesystem_small);
   mu_run("static_filesystem_large", test_static_filesystem_large);
+  mu_run("static_filesystem_directory_fallback", test_static_filesystem_directory_fallback);
   mu_run("static_rejects_unsafe_path", test_static_rejects_unsafe_path);
   mu_run("stat_cache_store_lookup", test_stat_cache_store_lookup);
   mu_run("cerver_init_fields", test_cerver_init_fields);
