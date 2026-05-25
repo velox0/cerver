@@ -25,10 +25,9 @@ typedef struct {
   size_t cap;
 } cerver_fetch_buf_t;
 
-static size_t fetch_write_cb(void* contents, size_t size, size_t nmemb,
-                             void* userp) {
-  size_t realsize       = size * nmemb;
-  cerver_fetch_buf_t* buf = (cerver_fetch_buf_t*)userp;
+static size_t fetch_write_cb(void* contents, size_t size, size_t nmemb, void* userp) {
+  size_t              realsize = size * nmemb;
+  cerver_fetch_buf_t* buf      = (cerver_fetch_buf_t*)userp;
 
   /* Grow buffer if needed */
   while (buf->len + realsize + 1 > buf->cap) {
@@ -53,9 +52,7 @@ static size_t fetch_write_cb(void* contents, size_t size, size_t nmemb,
 
 static pthread_once_t curl_init_once = PTHREAD_ONCE_INIT;
 
-static void curl_global_init_once(void) {
-  curl_global_init(CURL_GLOBAL_DEFAULT);
-}
+static void curl_global_init_once(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
@@ -72,8 +69,7 @@ static void curl_global_init_once(void) {
  * @return Heap-allocated response body string (caller must free), or
  *         empty string "" (heap-allocated) on error.
  */
-char* cerver_fetch(const char* url, const char* method,
-                   const char* body, const char** headers) {
+char* cerver_fetch(const char* url, const char* method, const char* body, const char** headers) {
   if (!url) {
     char* empty = malloc(1);
     if (empty) empty[0] = '\0';
@@ -148,8 +144,7 @@ char* cerver_fetch(const char* url, const char* method,
   CURLcode res = curl_easy_perform(curl);
 
   if (res != CURLE_OK) {
-    fprintf(stderr, "cerver: fetch error: %s (url: %s)\n",
-            curl_easy_strerror(res), url);
+    fprintf(stderr, "cerver: fetch error: %s (url: %s)\n", curl_easy_strerror(res), url);
     /* Return empty string on error */
     buf.data[0] = '\0';
     buf.len     = 0;

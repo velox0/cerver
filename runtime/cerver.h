@@ -234,7 +234,8 @@ struct cerver_server {
   cerver_stat_cache_t stat_cache;
 
   /* Worker pool */
-  int              worker_count;
+  int              worker_count;   /* configured connection worker count */
+  int              acceptor_count; /* actual acceptor thread count */
   cerver_worker_t* workers;
 
   /* Route trie for radix/trie-based routing */
@@ -290,8 +291,7 @@ void              cerver_trie_free(void* trie);
  * @return Heap-allocated response body (caller must free()), or
  *         empty heap-allocated string on error.
  */
-char* cerver_fetch(const char* url, const char* method,
-                   const char* body, const char** headers);
+char* cerver_fetch(const char* url, const char* method, const char* body, const char** headers);
 
 /* ------------------------------------------------------------------ */
 /*  MIME (internal)                                                   */

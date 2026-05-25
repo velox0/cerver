@@ -4,7 +4,7 @@
  * Architecture:
  *   - 1 acceptor thread per core with its own kqueue/epoll (accept only)
  *   - Shared connection thread pool (configurable size, default 128)
- *   - Acceptors never block — they push fds into a lock-free ring buffer
+ *   - Acceptors never block — they push fds into a shared queue guarded by a mutex/condvar
  *   - Pool workers handle full request lifecycle including keep-alive
  *   - On Linux: SO_REUSEPORT per acceptor; on macOS: shared listener
  */
@@ -651,17 +651,19 @@ int cerver_listen(cerver_server_t* srv) {
   signal(SIGTERM, signal_handler);
   signal(SIGPIPE, SIG_IGN);
 
-  srv->running = 1;
+  srv->running        = 1;
+  srv->acceptor_count = 0;
 
   /* Determine pool and acceptor counts.
    * Acceptors: min(worker_count, cpu_count) — one per core for accept.
    * Pool workers: worker_count * 16 — enough to cover concurrent keep-alive. */
-  int cpu_count      = get_cpu_count();
-  int acceptor_count = cpu_count;
-  if (acceptor_count > srv->worker_count) acceptor_count = srv->worker_count;
+  int cpu_count               = get_cpu_count();
+  int configured_worker_count = srv->worker_count;
+  int acceptor_count          = cpu_count;
+  if (acceptor_count > configured_worker_count) acceptor_count = configured_worker_count;
   if (acceptor_count < 1) acceptor_count = 1;
 
-  int pool_size = srv->worker_count * 16;
+  int pool_size = configured_worker_count * 16;
   if (pool_size < CERVER_CONN_POOL_SIZE) pool_size = CERVER_CONN_POOL_SIZE;
   if (pool_size > 1024) pool_size = 1024;
 
@@ -721,8 +723,8 @@ int cerver_listen(cerver_server_t* srv) {
   }
 
   /* Start acceptor threads */
-  srv->workers      = calloc((size_t)acceptor_count, sizeof(cerver_worker_t));
-  srv->worker_count = acceptor_count;
+  srv->workers        = calloc((size_t)acceptor_count, sizeof(cerver_worker_t));
+  srv->acceptor_count = acceptor_count;
   if (!srv->workers) {
     perror("cerver: calloc acceptors");
     srv->running = 0;
@@ -819,7 +821,7 @@ void cerver_shutdown(cerver_server_t* srv) {
   srv->running = 0;
 
   if (srv->workers) {
-    for (int i = 0; i < srv->worker_count; i++) {
+    for (int i = 0; i < srv->acceptor_count; i++) {
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
       if (srv->workers[i].listen_fd != srv->sock_fd && srv->workers[i].listen_fd >= 0)
         close(srv->workers[i].listen_fd);
