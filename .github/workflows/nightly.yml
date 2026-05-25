@@ -49,7 +49,7 @@ jobs:
           NEXT_PATCH=$((PATCH_NUM + 1))
           DATE=$(date +%Y%m%d)
           NEW_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-nightly.${DATE}.${GITHUB_RUN_NUMBER:-0}"
-          perl -pi -e "s/\"version\": \"$VERSION\"/\"version\": \"$NEW_VERSION\"/" package.json
+          npm version "$NEW_VERSION" --no-git-tag-version
           echo "Bumped version from $VERSION to $NEW_VERSION"
 
       - name: Verify package contents
