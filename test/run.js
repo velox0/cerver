@@ -403,6 +403,81 @@ test("generateEmbeddedAssets maps aliases according to the new convention", asyn
   }
 });
 
+/* ---- Fetch API tests ---- */
+
+test("validate accepts fetch() calls in route handlers", () => {
+  const source = `
+export function GET(req, res) {
+  const data = fetch("https://api.example.com/data");
+  return res.json(200, data);
+}
+`;
+  assert.doesNotThrow(() => parseAndValidate(source));
+});
+
+test("transformFile produces IRFetch nodes for fetch() calls", () => {
+  const source = `
+export function POST(req, res) {
+  const data = fetch("https://api.example.com/items", {
+    method: "POST",
+    body: "hello",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer token123"
+    }
+  });
+  return res.json(200, data);
+}
+`;
+  const ast = parseAndValidate(source, "fetch-route.js");
+  const routes = transformFile(ast, "/api/proxy");
+
+  assert.equal(routes.length, 1);
+  assert.equal(routes[0].method, "POST");
+
+  const variable = routes[0].handler.variables[0];
+  assert.equal(variable.name, "data");
+  assert.equal(variable.initExpr.type, "Fetch");
+  assert.equal(variable.initExpr.url.type, "StringLiteral");
+  assert.equal(variable.initExpr.url.value, "https://api.example.com/items");
+  assert.equal(variable.initExpr.method.type, "StringLiteral");
+  assert.equal(variable.initExpr.method.value, "POST");
+  assert.equal(variable.initExpr.body.type, "StringLiteral");
+  assert.equal(variable.initExpr.body.value, "hello");
+  assert.equal(variable.initExpr.headers.length, 2);
+  assert.equal(variable.initExpr.headers[0].key.value, "Content-Type");
+  assert.equal(variable.initExpr.headers[1].key.value, "Authorization");
+});
+
+test("emit generates cerver_fetch calls for simple and complex fetch expressions", () => {
+  /* Simple GET fetch as variable init */
+  const simpleFetch = IR.IRVariable("data", "string", IR.IRFetch(
+    IR.IRStringLiteral("https://api.example.com/data"),
+    null, null, null
+  ));
+
+  const simpleLines = emitStatement(simpleFetch, 1);
+  assert.ok(simpleLines.some(l => l.includes('cerver_fetch("https://api.example.com/data", NULL, NULL, NULL)')));
+
+  /* Fetch with headers in a Return */
+  const fetchWithHeaders = IR.IRReturn("json", 200, IR.IRFetch(
+    IR.IRStringLiteral("https://api.example.com"),
+    IR.IRStringLiteral("POST"),
+    IR.IRStringLiteral('{"key":"val"}'),
+    [
+      { key: IR.IRStringLiteral("Content-Type"), value: IR.IRStringLiteral("application/json") },
+    ]
+  ));
+
+  const headerLines = emitStatement(fetchWithHeaders, 1);
+  const joined = headerLines.join("\n");
+  assert.ok(joined.includes("snprintf"), "should use snprintf for header formatting");
+  assert.ok(joined.includes("cerver_fetch"), "should call cerver_fetch");
+  assert.ok(joined.includes("free("), "should free the fetch result");
+  assert.ok(joined.includes("cerver_res_json"), "should call the json response helper");
+});
+
+
 (async () => {
   let passed = 0;
 

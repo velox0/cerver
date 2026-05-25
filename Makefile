@@ -7,7 +7,8 @@ RUNTIME_SRCS = \
 	runtime/router.c \
 	runtime/static.c \
 	runtime/mime.c \
-	runtime/server.c
+	runtime/server.c \
+	runtime/fetch.c
 
 TEST_SRCS = runtime/tests/runtime_tests.c \
 	runtime/tests/minunit.c
@@ -20,7 +21,7 @@ test-runtime: $(TEST_BIN)
 
 $(TEST_BIN): $(RUNTIME_SRCS) $(TEST_SRCS) runtime/cerver.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -Iruntime -o $(TEST_BIN) $(RUNTIME_SRCS) $(TEST_SRCS) -pthread
+	$(CC) $(CFLAGS) -Iruntime -o $(TEST_BIN) $(RUNTIME_SRCS) $(TEST_SRCS) -pthread -lcurl
 
 clean:
 	rm -rf build

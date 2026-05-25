@@ -274,6 +274,26 @@ void              cerver_trie_insert(void* trie, const char* pattern, const char
 void              cerver_trie_free(void* trie);
 
 /* ------------------------------------------------------------------ */
+/*  Fetch — outbound HTTP client (libcurl)                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Perform a synchronous HTTP request.
+ *
+ * @param url     Request URL (required).
+ * @param method  HTTP method: "GET", "POST", "PUT", "DELETE", "PATCH"
+ *                (NULL defaults to "GET").
+ * @param body    Request body string (NULL for none).
+ * @param headers NULL-terminated array of "Key: Value" header strings,
+ *                or NULL for no custom headers.
+ *
+ * @return Heap-allocated response body (caller must free()), or
+ *         empty heap-allocated string on error.
+ */
+char* cerver_fetch(const char* url, const char* method,
+                   const char* body, const char** headers);
+
+/* ------------------------------------------------------------------ */
 /*  MIME (internal)                                                   */
 /* ------------------------------------------------------------------ */
 
