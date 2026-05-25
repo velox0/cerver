@@ -35,22 +35,26 @@ Note: timeouts only appear at the highest concurrency (240 connections). On a si
 
 ## Getting Started
 
-1. Install globally (requires `gcc` or `clang` on your system):
+You can run cerver directly using `npx` (requires `gcc` or `clang` and `libcurl` on your system):
 
 ```bash
-npm i @velox0/cerver@latest
-```
-
-2. Create a new project:
-
-```bash
-cerver new my-fast-api
+npx @velox0/cerver@latest new my-fast-api
 cd my-fast-api
 ```
 
-3. Build and Run:
+Build and Run:
 
 ```bash
+npx @velox0/cerver@latest build
+npx @velox0/cerver@latest run
+```
+
+Alternatively, you can install it globally:
+
+```bash
+npm i -g @velox0/cerver@latest
+cerver new my-fast-api
+cd my-fast-api
 cerver build
 cerver run
 ```
@@ -112,6 +116,29 @@ Because Cerver compiles to C, the API surface is restricted.
 - `res.json(status, string)` — Send JSON
 - `res.html(status, string)` — Send HTML
 
+## Outbound API Calls (fetch)
+
+Cerver supports making synchronous outbound HTTP requests using a native `libcurl` implementation. This requires `libcurl` to be installed on the host system (e.g., `libcurl4-openssl-dev` on Linux; pre-installed on macOS).
+
+```javascript
+export function POST(req, res) {
+  // Simple GET
+  const data = fetch("https://api.example.com/data");
+
+  // Full POST with headers and body
+  const result = fetch("https://api.example.com/items", {
+    method: "POST",
+    body: '{"name": "new item"}',
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer token123"
+    }
+  });
+
+  return res.json(200, result);
+}
+```
+
 ## Supported JavaScript
 
 Cerver supports a strict, synchronous subset of JavaScript suitable for C code generation:
@@ -121,6 +148,7 @@ Cerver supports a strict, synchronous subset of JavaScript suitable for C code g
 - String and Number literals
 - Template literals
 - Basic comparisons (`===`, `!==`, `<`, `>`)
+- Outbound API calls via `fetch(url, options)`
 
 **Not Supported (Compile-Time Errors):**
 
