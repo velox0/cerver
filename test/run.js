@@ -118,6 +118,18 @@ test("validate rejects unsupported HTTP methods and async handlers", () => {
   );
 });
 
+test("validate rejects multi-declarator variable declarations", () => {
+  const source = parseSource(
+    "export function GET(req, res) { const a = 1, b = 2; return res.text(200, 'ok'); }",
+    "multi-decl.js"
+  );
+
+  assert.throws(
+    () => validate(source.ast, "multi-decl.js", source.source),
+    /multiple declarations in one statement are not supported/
+  );
+});
+
 test("transformFile produces route IR for params, query, headers, and template returns", () => {
   const source = `
 export function GET(req, res) {
@@ -151,6 +163,35 @@ export function GET(req, res) {
   assert.equal(fallback.status, 404);
 });
 
+test("transformFile preserves ternary alternate branches and request fields", () => {
+  const source = `
+export function GET(req, res) {
+  const method = req.method;
+  const ok = method === "GET" ? 1 : 0;
+  return res.text(200, ok ? req.path : "other");
+}
+`;
+  const ast = parseAndValidate(source, "ternary.js");
+  const routes = transformFile(ast, "/ternary");
+
+  const variable = routes[0].handler.variables[0];
+  assert.equal(variable.initExpr.type, "RequestField");
+  assert.equal(variable.initExpr.fieldName, "method");
+
+  const numericTernary = routes[0].handler.variables[1];
+  assert.equal(numericTernary.valueType, "number");
+  assert.equal(numericTernary.initExpr.type, "Conditional");
+  assert.equal(numericTernary.initExpr.alternate.value, 0);
+
+  const returnValue = routes[0].handler.body[0].value;
+  assert.equal(returnValue.type, "Conditional");
+  assert.equal(returnValue.test.type, "Identifier");
+  assert.equal(returnValue.consequent.type, "RequestField");
+  assert.equal(returnValue.consequent.fieldName, "path");
+  assert.equal(returnValue.alternate.type, "StringLiteral");
+  assert.equal(returnValue.alternate.value, "other");
+});
+
 test("emit helpers escape C strings and map IR expressions", () => {
   assert.equal(cString('a"b\\c\n'), '"a\\"b\\\\c\\n"');
   assert.equal(handlerName("GET", "/"), "handle_GET_index");
@@ -172,6 +213,35 @@ test("emit helpers escape C strings and map IR expressions", () => {
       '    cerver_res_text(res, 201, "created");',
       "    return;",
     ]
+  );
+
+  assert.equal(
+    emitExpression(IR.IRConditional(
+      IR.IRNumberLiteral(1),
+      IR.IRStringLiteral("yes"),
+      IR.IRStringLiteral("no")
+    )),
+    '(1 ? "yes" : "no")'
+  );
+});
+
+test("emit handles direct concat returns and rejects nested statement-only expressions", () => {
+  const concatReturn = IR.IRReturn(
+    "text",
+    200,
+    IR.IRConcat([IR.IRStringLiteral("hello "), IR.IRIdentifier("name")])
+  );
+  const lines = emitStatement(concatReturn, 1);
+  const joined = lines.join("\n");
+
+  assert.doesNotMatch(joined, /__concat_/);
+  assert.match(joined, /malloc\(1024\)/);
+  assert.match(joined, /snprintf\(_concat_res_0, 1024, "hello %s", name\);/);
+  assert.match(joined, /res->_body_owned = 1/);
+
+  assert.throws(
+    () => emitExpression(IR.IRConcat([IR.IRStringLiteral("x"), IR.IRIdentifier("y")])),
+    /template literal interpolation must be emitted in statement context/
   );
 });
 
@@ -199,6 +269,8 @@ test("generateDispatch generates correct parameter extraction and termination", 
   assert.match(code, /req->params\[req->params_count\]\.key = "id";/);
   assert.match(code, /req->params\[req->params_count\]\.value = seg1_start;/);
   assert.match(code, /\(\(char\*\)seg1_start\)\[seg1_len\] = '\\0';/);
+  assert.doesNotMatch(code, /\btrue\b|\bfalse\b/);
+  assert.match(code, /if \(match && \*p == '\/'\) p\+\+; else match = 0;/);
 });
 
 test("loadConfig merges defaults and supports export default configs", () => {
@@ -473,7 +545,7 @@ test("emit generates cerver_fetch calls for simple and complex fetch expressions
   const joined = headerLines.join("\n");
   assert.ok(joined.includes("snprintf"), "should use snprintf for header formatting");
   assert.ok(joined.includes("cerver_fetch"), "should call cerver_fetch");
-  assert.ok(joined.includes("free("), "should free the fetch result");
+  assert.ok(joined.includes("res->_body_owned = 1"), "should transfer fetch result ownership to response");
   assert.ok(joined.includes("cerver_res_json"), "should call the json response helper");
 });
 

@@ -39,8 +39,6 @@
 /* Keep-alive settings */
 #define CERVER_KEEPALIVE_MAX     2000000000 /* max requests per connection */
 #define CERVER_KEEPALIVE_TIMEOUT 5          /* seconds idle between requests */
-#define CERVER_KEEPALIVE_MAX     2000000000 /* max requests per connection */
-#define CERVER_KEEPALIVE_TIMEOUT 5          /* seconds idle between requests */
 
 /* Event loop tuning */
 #define CERVER_MAX_EVENTS     256
