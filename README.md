@@ -172,6 +172,7 @@ export default {
   // Optional: compiler customization and cross-target settings
   compile: {
     // cc: "clang", // or "x86_64-linux-gnu-gcc"
+    // output: "dist/server", // output binary path (relative to project root)
     // target: "x86_64-linux-gnu", // full target triple (preferred)
     // targetOs: "linux", // or "darwin" (used with targetArch if target omitted)
     // targetArch: "x86_64", // or "arm64"
@@ -195,6 +196,9 @@ cerver build --target x86_64-linux-gnu --cc x86_64-linux-gnu-gcc
 
 # Or split OS/arch
 cerver build --target-os linux --target-arch arm64
+
+# Custom output location
+cerver build --output dist/cerver-linux
 ```
 
 Note: when a target is specified, `-march=native` is disabled by default (set `compile.marchNative: true` to force it). Cross-compiling requires an appropriate toolchain and sysroot for the target.

@@ -48,6 +48,7 @@ program
   .option("--sysroot <path>", "Sysroot path for cross-compiling")
   .option("--cflags <flags>", "Extra C compiler flags")
   .option("--ldflags <flags>", "Extra linker flags")
+  .option("-o, --output <path>", "Output binary path (default: dist/server)")
   .option("--compile-info", "Print the compiler command")
   .action((opts) => {
     const { build } = require("../lib/commands/build");
