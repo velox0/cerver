@@ -38,6 +38,17 @@ program
   .option("--no-embed", "Serve static assets from the filesystem")
   .option("--static", "Produce a statically linked binary")
   .option("--no-minify", "Skip asset minification")
+  .option(
+    "--cc <compiler>",
+    "C compiler to use (e.g., clang, x86_64-linux-gnu-gcc)",
+  )
+  .option("--target <triple>", "Target triple (e.g., x86_64-linux-gnu)")
+  .option("--target-os <os>", "Target OS (e.g., linux, darwin)")
+  .option("--target-arch <arch>", "Target architecture (e.g., x86_64, arm64)")
+  .option("--sysroot <path>", "Sysroot path for cross-compiling")
+  .option("--cflags <flags>", "Extra C compiler flags")
+  .option("--ldflags <flags>", "Extra linker flags")
+  .option("--compile-info", "Print the compiler command")
   .action((opts) => {
     const { build } = require("../lib/commands/build");
     build(opts);

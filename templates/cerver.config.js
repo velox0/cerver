@@ -3,5 +3,6 @@ export default {
   threads: 8,
   embed: true,
   minify: true,
-  compression: "none"
-}
+  compression: "none",
+  compile: {}, // Optional compiler overrides (see README)
+};

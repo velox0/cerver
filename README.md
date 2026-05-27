@@ -169,8 +169,35 @@ export default {
   embed: true, // Embed assets from public/ into the binary
   minify: true, // Minify HTML/CSS/JS before embedding
   compression: "none", // Future: pre-compress assets
+  // Optional: compiler customization and cross-target settings
+  compile: {
+    // cc: "clang", // or "x86_64-linux-gnu-gcc"
+    // target: "x86_64-linux-gnu", // full target triple (preferred)
+    // targetOs: "linux", // or "darwin" (used with targetArch if target omitted)
+    // targetArch: "x86_64", // or "arm64"
+    // sysroot: "/path/to/sysroot",
+    // cflags: "-O2 -g",
+    // ldflags: "-static",
+    // lto: true,
+    // marchNative: false,
+    // compileInfo: false,
+  },
 };
 ```
+
+### Cross-Compilation
+
+Pass target details via CLI or `cerver.config.js`. If `target` is set, it is used as-is. If only `targetOs` + `targetArch` are set, Cerver will build a simple `arch-os` target string.
+
+```bash
+# Use a full target triple
+cerver build --target x86_64-linux-gnu --cc x86_64-linux-gnu-gcc
+
+# Or split OS/arch
+cerver build --target-os linux --target-arch arm64
+```
+
+Note: when a target is specified, `-march=native` is disabled by default (set `compile.marchNative: true` to force it). Cross-compiling requires an appropriate toolchain and sysroot for the target.
 
 ## How It Works
 
