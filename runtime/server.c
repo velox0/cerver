@@ -87,6 +87,11 @@ static int get_cpu_count(void) {
   return (int)n;
 }
 
+static void best_effort_write(int fd, const char* buf, size_t len) {
+  ssize_t written = write(fd, buf, len);
+  (void)written;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Connection queue (shared between acceptors and pool workers)       */
 /* ------------------------------------------------------------------ */
@@ -250,7 +255,7 @@ static void handle_connection(cerver_server_t* srv, int client_fd) {
       const char* resp =
           "HTTP/1.1 400 Bad Request\r\n"
           "Content-Length: 11\r\nConnection: close\r\n\r\nBad Request";
-      write(client_fd, resp, strlen(resp));
+      best_effort_write(client_fd, resp, strlen(resp));
       free(buf);
       break;
     }
@@ -443,7 +448,7 @@ static void* acceptor_loop(void* arg) {
                 "HTTP/1.1 503 Service Unavailable\r\n"
                 "Content-Length: 19\r\nConnection: close\r\n\r\n"
                 "Service Unavailable";
-            write(cfd, r, strlen(r));
+            best_effort_write(cfd, r, strlen(r));
             close(cfd);
           }
         }
@@ -500,7 +505,7 @@ static void* acceptor_loop(void* arg) {
                 "HTTP/1.1 503 Service Unavailable\r\n"
                 "Content-Length: 19\r\nConnection: close\r\n\r\n"
                 "Service Unavailable";
-            write(cfd, r, strlen(r));
+            best_effort_write(cfd, r, strlen(r));
             close(cfd);
           }
         }
