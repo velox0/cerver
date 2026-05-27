@@ -8,7 +8,11 @@ const zlib = require("zlib");
 
 const { discoverAssets } = require("../lib/assets/discover");
 const { compressContent, isCompressible } = require("../lib/assets/compress");
-const { generateEmbeddedAssets, mimeFromExt, varName } = require("../lib/assets/embed");
+const {
+  generateEmbeddedAssets,
+  mimeFromExt,
+  varName,
+} = require("../lib/assets/embed");
 const { minifyContent } = require("../lib/assets/minify");
 const {
   cString,
@@ -53,10 +57,22 @@ test("discoverRoutes maps file routes and sorts dynamic routes last", () => {
   const dir = tempDir();
   try {
     const routesDir = path.join(dir, "routes");
-    writeFile(path.join(routesDir, "index.js"), "export function GET(req, res) {}");
-    writeFile(path.join(routesDir, "about.js"), "export function GET(req, res) {}");
-    writeFile(path.join(routesDir, "blog", "index.js"), "export function GET(req, res) {}");
-    writeFile(path.join(routesDir, "blog", "[slug].js"), "export function GET(req, res) {}");
+    writeFile(
+      path.join(routesDir, "index.js"),
+      "export function GET(req, res) {}",
+    );
+    writeFile(
+      path.join(routesDir, "about.js"),
+      "export function GET(req, res) {}",
+    );
+    writeFile(
+      path.join(routesDir, "blog", "index.js"),
+      "export function GET(req, res) {}",
+    );
+    writeFile(
+      path.join(routesDir, "blog", "[slug].js"),
+      "export function GET(req, res) {}",
+    );
     writeFile(path.join(routesDir, "blog", "draft.txt"), "ignored");
 
     const routes = discoverRoutes(routesDir).map((route) => ({
@@ -101,32 +117,32 @@ export function GET(req, res) {
 test("validate rejects unsupported HTTP methods and async handlers", () => {
   const badMethod = parseSource(
     "export function PUT(req, res) { return res.text(200, 'no'); }",
-    "bad-method.js"
+    "bad-method.js",
   );
   assert.throws(
     () => validate(badMethod.ast, "bad-method.js", badMethod.source),
-    /exported function "PUT" is not a valid HTTP method/
+    /exported function "PUT" is not a valid HTTP method/,
   );
 
   const asyncHandler = parseSource(
     "export async function GET(req, res) { await work(); return res.text(200, 'ok'); }",
-    "async-route.js"
+    "async-route.js",
   );
   assert.throws(
     () => validate(asyncHandler.ast, "async-route.js", asyncHandler.source),
-    /async functions are not supported[\s\S]*async\/await is not supported/
+    /async functions are not supported[\s\S]*async\/await is not supported/,
   );
 });
 
 test("validate rejects multi-declarator variable declarations", () => {
   const source = parseSource(
     "export function GET(req, res) { const a = 1, b = 2; return res.text(200, 'ok'); }",
-    "multi-decl.js"
+    "multi-decl.js",
   );
 
   assert.throws(
     () => validate(source.ast, "multi-decl.js", source.source),
-    /multiple declarations in one statement are not supported/
+    /multiple declarations in one statement are not supported/,
   );
 });
 
@@ -200,28 +216,27 @@ test("emit helpers escape C strings and map IR expressions", () => {
   const comparison = IR.IRComparison(
     "===",
     IR.IRParamAccess("id"),
-    IR.IRStringLiteral("42")
+    IR.IRStringLiteral("42"),
   );
   assert.equal(
     emitExpression(comparison),
-    '(strcmp(cerver_req_param(req, "id"), "42") == 0)'
+    '(strcmp(cerver_req_param(req, "id"), "42") == 0)',
   );
 
   assert.deepEqual(
     emitStatement(IR.IRReturn("text", 201, IR.IRStringLiteral("created")), 1),
-    [
-      '    cerver_res_text(res, 201, "created");',
-      "    return;",
-    ]
+    ['    cerver_res_text(res, 201, "created");', "    return;"],
   );
 
   assert.equal(
-    emitExpression(IR.IRConditional(
-      IR.IRNumberLiteral(1),
-      IR.IRStringLiteral("yes"),
-      IR.IRStringLiteral("no")
-    )),
-    '(1 ? "yes" : "no")'
+    emitExpression(
+      IR.IRConditional(
+        IR.IRNumberLiteral(1),
+        IR.IRStringLiteral("yes"),
+        IR.IRStringLiteral("no"),
+      ),
+    ),
+    '(1 ? "yes" : "no")',
   );
 });
 
@@ -229,7 +244,7 @@ test("emit handles direct concat returns and rejects nested statement-only expre
   const concatReturn = IR.IRReturn(
     "text",
     200,
-    IR.IRConcat([IR.IRStringLiteral("hello "), IR.IRIdentifier("name")])
+    IR.IRConcat([IR.IRStringLiteral("hello "), IR.IRIdentifier("name")]),
   );
   const lines = emitStatement(concatReturn, 1);
   const joined = lines.join("\n");
@@ -240,8 +255,11 @@ test("emit handles direct concat returns and rejects nested statement-only expre
   assert.match(joined, /res->_body_owned = 1/);
 
   assert.throws(
-    () => emitExpression(IR.IRConcat([IR.IRStringLiteral("x"), IR.IRIdentifier("y")])),
-    /template literal interpolation must be emitted in statement context/
+    () =>
+      emitExpression(
+        IR.IRConcat([IR.IRStringLiteral("x"), IR.IRIdentifier("y")]),
+      ),
+    /template literal interpolation must be emitted in statement context/,
   );
 });
 
@@ -253,7 +271,10 @@ test("generateRouteTable emits forward declarations, entries, and count", () => 
 
   const code = generateRouteTable(routes);
 
-  assert.match(code, /static void handle_GET_index\(cerver_request_t \*req, cerver_response_t \*res\);/);
+  assert.match(
+    code,
+    /static void handle_GET_index\(cerver_request_t \*req, cerver_response_t \*res\);/,
+  );
   assert.match(code, /cerver_route_t cerver_routes\[\] = \{/);
   assert.match(code, /\{ "GET", "\/", handle_GET_index \},/);
   assert.match(code, /\{ "POST", "\/users\/:id", handle_POST_users_id \},/);
@@ -282,11 +303,24 @@ test("loadConfig merges defaults and supports export default configs", () => {
       minify: true,
       compression: "none",
       threads: 4,
+      compile: {
+        cc: null,
+        output: null,
+        target: null,
+        targetOs: null,
+        targetArch: null,
+        sysroot: null,
+        cflags: "",
+        ldflags: "",
+        lto: true,
+        marchNative: undefined,
+        compileInfo: false,
+      },
     });
 
     writeFile(
       path.join(dir, "cerver.config.js"),
-      'export default { port: 3001, embed: false, minify: false, compression: "gzip" };\n'
+      'export default { port: 3001, embed: false, minify: false, compression: "gzip" };\n',
     );
 
     assert.deepEqual(loadConfig(dir), {
@@ -295,6 +329,19 @@ test("loadConfig merges defaults and supports export default configs", () => {
       minify: false,
       compression: "gzip",
       threads: 4,
+      compile: {
+        cc: null,
+        output: null,
+        target: null,
+        targetOs: null,
+        targetArch: null,
+        sysroot: null,
+        cflags: "",
+        ldflags: "",
+        lto: true,
+        marchNative: undefined,
+        compileInfo: false,
+      },
     });
   } finally {
     cleanup(dir);
@@ -321,10 +368,16 @@ test("findProjectRoot traverses up and locates project root correctly", () => {
 test("loadConfig rejects invalid ports and compression values", () => {
   const dir = tempDir();
   try {
-    writeFile(path.join(dir, "cerver.config.js"), "module.exports = { port: 70000 };\n");
+    writeFile(
+      path.join(dir, "cerver.config.js"),
+      "module.exports = { port: 70000 };\n",
+    );
     assert.throws(() => loadConfig(dir), /invalid port 70000/);
 
-    writeFile(path.join(dir, "cerver.config.js"), 'module.exports = { compression: "zip" };\n');
+    writeFile(
+      path.join(dir, "cerver.config.js"),
+      'module.exports = { compression: "zip" };\n',
+    );
     assert.throws(() => loadConfig(dir), /unsupported compression "zip"/);
   } finally {
     cleanup(dir);
@@ -348,8 +401,16 @@ test("discoverAssets maps public files and skips dotfiles", () => {
       .sort((a, b) => a.servePath.localeCompare(b.servePath));
 
     assert.deepEqual(assets, [
-      { servePath: "/css/app.css", ext: ".css", size: Buffer.byteLength("body { color: red; }") },
-      { servePath: "/index.html", ext: ".html", size: Buffer.byteLength("<h1>Hello</h1>") },
+      {
+        servePath: "/css/app.css",
+        ext: ".css",
+        size: Buffer.byteLength("body { color: red; }"),
+      },
+      {
+        servePath: "/index.html",
+        ext: ".html",
+        size: Buffer.byteLength("<h1>Hello</h1>"),
+      },
     ]);
   } finally {
     cleanup(dir);
@@ -363,7 +424,10 @@ test("asset helpers generate stable names and MIME types", () => {
 });
 
 test("minifyContent minifies CSS content", async () => {
-  const source = Buffer.from("/* comment */\nbody { color: red; margin: 0; }\n", "utf8");
+  const source = Buffer.from(
+    "/* comment */\nbody { color: red; margin: 0; }\n",
+    "utf8",
+  );
   const minified = await minifyContent(source, ".css");
   const text = minified.toString("utf8");
 
@@ -381,7 +445,10 @@ test("compression helpers identify compressible MIME types and round-trip gzip",
 
   const compressed = await compressContent(source, "gzip");
   assert.ok(compressed.length < source.length);
-  assert.equal(zlib.gunzipSync(compressed).toString("utf8"), source.toString("utf8"));
+  assert.equal(
+    zlib.gunzipSync(compressed).toString("utf8"),
+    source.toString("utf8"),
+  );
 });
 
 test("generateEmbeddedAssets emits C arrays and asset table entries", async () => {
@@ -393,17 +460,19 @@ test("generateEmbeddedAssets emits C arrays and asset table entries", async () =
 
     const code = await generateEmbeddedAssets(
       [{ filePath, servePath: "/css/app.css", ext: ".css" }],
-      false
+      false,
     );
 
     assert.match(code, /static const unsigned char asset_css_app_css\[\] = \{/);
     assert.match(
       code,
-      new RegExp(`static const unsigned int asset_css_app_css_len = ${Buffer.byteLength(content)};`)
+      new RegExp(
+        `static const unsigned int asset_css_app_css_len = ${Buffer.byteLength(content)};`,
+      ),
     );
     assert.match(
       code,
-      /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, .* \},/
+      /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, .* \},/,
     );
     assert.match(code, /const int cerver_embedded_asset_count = 1;/);
   } finally {
@@ -421,14 +490,20 @@ test("generateEmbeddedAssets can emit gzip variants for compressible assets", as
     const code = await generateEmbeddedAssets(
       [{ filePath, servePath: "/css/app.css", ext: ".css" }],
       false,
-      "gzip"
+      "gzip",
     );
 
-    assert.match(code, /static const unsigned char asset_css_app_css_gz\[\] = \{/);
-    assert.match(code, /static const unsigned int asset_css_app_css_gz_len = \d+;/);
     assert.match(
       code,
-      /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, asset_css_app_css_gz, asset_css_app_css_gz_len, NULL, 0, NULL, 0 \},/
+      /static const unsigned char asset_css_app_css_gz\[\] = \{/,
+    );
+    assert.match(
+      code,
+      /static const unsigned int asset_css_app_css_gz_len = \d+;/,
+    );
+    assert.match(
+      code,
+      /\{ "\/css\/app\.css", "text\/css; charset=utf-8", asset_css_app_css, asset_css_app_css_len, asset_css_app_css_gz, asset_css_app_css_gz_len, NULL, 0, NULL, 0 \},/,
     );
   } finally {
     cleanup(dir);
@@ -439,11 +514,31 @@ test("generateEmbeddedAssets maps aliases according to the new convention", asyn
   const dir = tempDir();
   try {
     const assets = [
-      { filePath: path.join(dir, "public", "index.html"), servePath: "/index.html", ext: ".html" },
-      { filePath: path.join(dir, "public", "abcd", "index.html"), servePath: "/abcd/index.html", ext: ".html" },
-      { filePath: path.join(dir, "public", "page", "page.html"), servePath: "/page/page.html", ext: ".html" },
-      { filePath: path.join(dir, "public", "foo", "bar", "bar.html"), servePath: "/foo/bar/bar.html", ext: ".html" },
-      { filePath: path.join(dir, "public", "foo", "bar", "baz.html"), servePath: "/foo/bar/baz.html", ext: ".html" }
+      {
+        filePath: path.join(dir, "public", "index.html"),
+        servePath: "/index.html",
+        ext: ".html",
+      },
+      {
+        filePath: path.join(dir, "public", "abcd", "index.html"),
+        servePath: "/abcd/index.html",
+        ext: ".html",
+      },
+      {
+        filePath: path.join(dir, "public", "page", "page.html"),
+        servePath: "/page/page.html",
+        ext: ".html",
+      },
+      {
+        filePath: path.join(dir, "public", "foo", "bar", "bar.html"),
+        servePath: "/foo/bar/bar.html",
+        ext: ".html",
+      },
+      {
+        filePath: path.join(dir, "public", "foo", "bar", "baz.html"),
+        servePath: "/foo/bar/baz.html",
+        ext: ".html",
+      },
     ];
 
     for (const a of assets) {
@@ -453,23 +548,44 @@ test("generateEmbeddedAssets maps aliases according to the new convention", asyn
     const code = await generateEmbeddedAssets(assets, false);
 
     // /index.html should alias to /
-    assert.match(code, /\{ "\/", "text\/html; charset=utf-8", asset_index_html, asset_index_html_len, .* \},/);
-    
+    assert.match(
+      code,
+      /\{ "\/", "text\/html; charset=utf-8", asset_index_html, asset_index_html_len, .* \},/,
+    );
+
     // /abcd/index.html should NOT alias to /abcd
-    assert.doesNotMatch(code, /\{ "\/abcd", "text\/html; charset=utf-8", asset_abcd_index_html, asset_abcd_index_html_len, .* \},/);
+    assert.doesNotMatch(
+      code,
+      /\{ "\/abcd", "text\/html; charset=utf-8", asset_abcd_index_html, asset_abcd_index_html_len, .* \},/,
+    );
     // but the original should be there
-    assert.match(code, /\{ "\/abcd\/index\.html", "text\/html; charset=utf-8", asset_abcd_index_html, asset_abcd_index_html_len, .* \},/);
+    assert.match(
+      code,
+      /\{ "\/abcd\/index\.html", "text\/html; charset=utf-8", asset_abcd_index_html, asset_abcd_index_html_len, .* \},/,
+    );
 
     // /page/page.html should alias to /page
-    assert.match(code, /\{ "\/page", "text\/html; charset=utf-8", asset_page_page_html, asset_page_page_html_len, .* \},/);
+    assert.match(
+      code,
+      /\{ "\/page", "text\/html; charset=utf-8", asset_page_page_html, asset_page_page_html_len, .* \},/,
+    );
     // and the original should be there
-    assert.match(code, /\{ "\/page\/page\.html", "text\/html; charset=utf-8", asset_page_page_html, asset_page_page_html_len, .* \},/);
+    assert.match(
+      code,
+      /\{ "\/page\/page\.html", "text\/html; charset=utf-8", asset_page_page_html, asset_page_page_html_len, .* \},/,
+    );
 
     // /foo/bar/bar.html should alias to /foo/bar
-    assert.match(code, /\{ "\/foo\/bar", "text\/html; charset=utf-8", asset_foo_bar_bar_html, asset_foo_bar_bar_html_len, .* \},/);
+    assert.match(
+      code,
+      /\{ "\/foo\/bar", "text\/html; charset=utf-8", asset_foo_bar_bar_html, asset_foo_bar_bar_html_len, .* \},/,
+    );
 
     // /foo/bar/baz.html should NOT alias to /foo/bar/baz (since it's baz.html in bar/)
-    assert.doesNotMatch(code, /\{ "\/foo\/bar\/baz", "text\/html; charset=utf-8", asset_foo_bar_baz_html, .* \},/);
+    assert.doesNotMatch(
+      code,
+      /\{ "\/foo\/bar\/baz", "text\/html; charset=utf-8", asset_foo_bar_baz_html, .* \},/,
+    );
   } finally {
     cleanup(dir);
   }
@@ -523,32 +639,59 @@ export function POST(req, res) {
 
 test("emit generates cerver_fetch calls for simple and complex fetch expressions", () => {
   /* Simple GET fetch as variable init */
-  const simpleFetch = IR.IRVariable("data", "string", IR.IRFetch(
-    IR.IRStringLiteral("https://api.example.com/data"),
-    null, null, null
-  ));
+  const simpleFetch = IR.IRVariable(
+    "data",
+    "string",
+    IR.IRFetch(
+      IR.IRStringLiteral("https://api.example.com/data"),
+      null,
+      null,
+      null,
+    ),
+  );
 
   const simpleLines = emitStatement(simpleFetch, 1);
-  assert.ok(simpleLines.some(l => l.includes('cerver_fetch("https://api.example.com/data", NULL, NULL, NULL)')));
+  assert.ok(
+    simpleLines.some((l) =>
+      l.includes(
+        'cerver_fetch("https://api.example.com/data", NULL, NULL, NULL)',
+      ),
+    ),
+  );
 
   /* Fetch with headers in a Return */
-  const fetchWithHeaders = IR.IRReturn("json", 200, IR.IRFetch(
-    IR.IRStringLiteral("https://api.example.com"),
-    IR.IRStringLiteral("POST"),
-    IR.IRStringLiteral('{"key":"val"}'),
-    [
-      { key: IR.IRStringLiteral("Content-Type"), value: IR.IRStringLiteral("application/json") },
-    ]
-  ));
+  const fetchWithHeaders = IR.IRReturn(
+    "json",
+    200,
+    IR.IRFetch(
+      IR.IRStringLiteral("https://api.example.com"),
+      IR.IRStringLiteral("POST"),
+      IR.IRStringLiteral('{"key":"val"}'),
+      [
+        {
+          key: IR.IRStringLiteral("Content-Type"),
+          value: IR.IRStringLiteral("application/json"),
+        },
+      ],
+    ),
+  );
 
   const headerLines = emitStatement(fetchWithHeaders, 1);
   const joined = headerLines.join("\n");
-  assert.ok(joined.includes("snprintf"), "should use snprintf for header formatting");
+  assert.ok(
+    joined.includes("snprintf"),
+    "should use snprintf for header formatting",
+  );
   assert.ok(joined.includes("cerver_fetch"), "should call cerver_fetch");
-  assert.ok(joined.includes("res->_body_owned = 1"), "should transfer fetch result ownership to response");
-  assert.ok(joined.includes("cerver_res_json"), "should call the json response helper");
+  assert.ok(
+    joined.includes("res->_body_owned = 1"),
+    "should transfer fetch result ownership to response",
+  );
+  assert.ok(
+    joined.includes("cerver_res_json"),
+    "should call the json response helper",
+  );
 });
-
 
 (async () => {
   let passed = 0;
