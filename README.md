@@ -91,6 +91,7 @@ export function GET(req, res) {
 ### Clean URL Asset Mapping
 
 Cerver has a special asset routing convention that prevents folder clutter:
+
 - **Root Index**: `public/index.html` is automatically served at the root `/`.
 - **Directory Indexing**: Nested `index.html` files inside directories (e.g. `public/page/index.html`) are **not** implicitly aliased to `/page` (they remain at `/page/index.html`).
 - **Clean Folder Slugs**: If an HTML file has the exact same name as its parent directory, it is mapped to the clean directory URL. For example:
@@ -131,8 +132,8 @@ export function POST(req, res) {
     body: '{"name": "new item"}',
     headers: {
       "Content-Type": "application/json",
-      "Authorization": "Bearer token123"
-    }
+      Authorization: "Bearer token123",
+    },
   });
 
   return res.json(200, result);
@@ -144,6 +145,7 @@ export function POST(req, res) {
 Cerver supports a strict, synchronous subset of JavaScript suitable for C code generation:
 
 - `if`/`else` statements
+- `for` loops (`for (init; condition; update)`) and `while` loops
 - `const` / `let` variable declarations
 - String and Number literals
 - Template literals
@@ -153,7 +155,6 @@ Cerver supports a strict, synchronous subset of JavaScript suitable for C code g
 **Not Supported (Compile-Time Errors):**
 
 - `async`/`await` and Promises
-- Loops (`for`, `while`)
 - Classes and the `new` keyword
 - `eval()`
 - Runtime `import`/`require`
