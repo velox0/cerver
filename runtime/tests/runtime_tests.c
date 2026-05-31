@@ -8,10 +8,49 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
+
+#if CERVER_PLATFORM_WINDOWS
+#include <direct.h>
+#include <io.h>
+#ifndef PATH_MAX
+#define PATH_MAX _MAX_PATH
+#endif  // PATH_MAX
+#define cerver_test_open              _open
+#define cerver_test_close             _close
+#define cerver_test_read              _read
+#define cerver_test_write             _write
+#define cerver_test_pipe(fds)         _pipe((fds), 4096, _O_BINARY)
+#define cerver_test_unlink            _unlink
+#define cerver_test_rmdir             _rmdir
+#define cerver_test_mkdir(path, mode) _mkdir(path)
+#else
+#include <sys/mman.h>
 #include <unistd.h>
+#define cerver_test_open              open
+#define cerver_test_close             close
+#define cerver_test_read              read
+#define cerver_test_write             write
+#define cerver_test_pipe(fds)         pipe((fds))
+#define cerver_test_unlink            unlink
+#define cerver_test_rmdir             rmdir
+#define cerver_test_mkdir(path, mode) mkdir((path), (mode))
+#endif  // CERVER_PLATFORM_WINDOWS
+
+#if !CERVER_PLATFORM_WINDOWS
+char* mkdtemp(char* tmpl);
+#endif  // !CERVER_PLATFORM_WINDOWS
+
+static char* cerver_test_mkdtemp(char* tmpl) {
+#if CERVER_PLATFORM_WINDOWS
+  if (_mktemp(tmpl) == NULL) return NULL;
+  if (_mkdir(tmpl) != 0) return NULL;
+  return tmpl;
+#else
+  return mkdtemp(tmpl);
+#endif  // CERVER_PLATFORM_WINDOWS
+}
 
 static const char* res_header(const cerver_response_t* res, const char* key) {
   for (int i = 0; i < res->header_count; i++) {
@@ -29,28 +68,28 @@ static void req_add_header(cerver_request_t* req, const char* key, const char* v
 }
 
 static int write_file(const char* path, const void* data, size_t len) {
-  int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
+  int fd = cerver_test_open(path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
   if (fd < 0) {
     return -1;
   }
   const unsigned char* p   = (const unsigned char*)data;
   size_t               off = 0;
   while (off < len) {
-    ssize_t n = write(fd, p + off, len - off);
+    ssize_t n = cerver_test_write(fd, p + off, len - off);
     if (n <= 0) {
-      close(fd);
+      cerver_test_close(fd);
       return -1;
     }
     off += (size_t)n;
   }
-  close(fd);
+  cerver_test_close(fd);
   return 0;
 }
 
 static ssize_t read_all(int fd, char* buf, size_t cap) {
   size_t off = 0;
   while (off + 1 < cap) {
-    ssize_t n = read(fd, buf + off, cap - off - 1);
+    ssize_t n = cerver_test_read(fd, buf + off, cap - off - 1);
     if (n < 0) {
       return -1;
     }
@@ -114,7 +153,7 @@ static void test_parse_request_trailing_slash(void) {
 
 static void test_write_response_keepalive(void) {
   int fds[2];
-  MU_ASSERT(pipe(fds) == 0);
+  MU_ASSERT(cerver_test_pipe(fds) == 0);
 
   cerver_response_t res;
   memset(&res, 0, sizeof(res));
@@ -122,11 +161,11 @@ static void test_write_response_keepalive(void) {
   cerver_res_header(&res, "X-Test", "1");
 
   MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
-  close(fds[1]);
+  cerver_test_close(fds[1]);
 
   char out[1024];
   MU_ASSERT(read_all(fds[0], out, sizeof(out)) > 0);
-  close(fds[0]);
+  cerver_test_close(fds[0]);
 
   MU_ASSERT(strstr(out, "HTTP/1.1 200 OK\r\n") != NULL);
   MU_ASSERT(strstr(out, "Content-Type: text/plain; charset=utf-8\r\n") != NULL);
@@ -139,7 +178,7 @@ static void test_write_response_keepalive(void) {
 
 static void test_write_response_force_close(void) {
   int fds[2];
-  MU_ASSERT(pipe(fds) == 0);
+  MU_ASSERT(cerver_test_pipe(fds) == 0);
 
   cerver_response_t res;
   memset(&res, 0, sizeof(res));
@@ -147,11 +186,11 @@ static void test_write_response_force_close(void) {
   res._force_close = 1;
 
   MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
-  close(fds[1]);
+  cerver_test_close(fds[1]);
 
   char out[512];
   MU_ASSERT(read_all(fds[0], out, sizeof(out)) > 0);
-  close(fds[0]);
+  cerver_test_close(fds[0]);
 
   MU_ASSERT(strstr(out, "Connection: close\r\n") != NULL);
 }
@@ -314,7 +353,7 @@ static void test_static_embedded_index_fallback(void) {
 
 static void test_static_filesystem_directory_fallback(void) {
   char  dir_template[] = "/tmp/cerver-test-XXXXXX";
-  char* dir            = mkdtemp(dir_template);
+  char* dir            = cerver_test_mkdtemp(dir_template);
   MU_ASSERT(dir != NULL);
 
   /* Create public/index.html (maps to /) */
@@ -325,7 +364,7 @@ static void test_static_filesystem_directory_fallback(void) {
   /* Create public/about/about.html (maps to /about or /about/) */
   char sub_dir[PATH_MAX];
   snprintf(sub_dir, sizeof(sub_dir), "%s/about", dir);
-  MU_ASSERT_EQ_INT(0, mkdir(sub_dir, 0700));
+  MU_ASSERT_EQ_INT(0, cerver_test_mkdir(sub_dir, 0700));
 
   char file_path2[PATH_MAX];
   snprintf(file_path2, sizeof(file_path2), "%s/about/about.html", dir);
@@ -352,7 +391,7 @@ static void test_static_filesystem_directory_fallback(void) {
 
     MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
     MU_ASSERT_EQ_SIZE(10, res.body_len);
-    if (res._body_owned == 3 && res._file_fd >= 0) close(res._file_fd);
+    if (res._body_owned == 3 && res._file_fd >= 0) cerver_test_close(res._file_fd);
   }
 
   /* Test /about -> about/about.html fallback */
@@ -366,7 +405,7 @@ static void test_static_filesystem_directory_fallback(void) {
 
     MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
     MU_ASSERT_EQ_SIZE(13, res.body_len);
-    if (res._body_owned == 3 && res._file_fd >= 0) close(res._file_fd);
+    if (res._body_owned == 3 && res._file_fd >= 0) cerver_test_close(res._file_fd);
   }
 
   /* Test /about/ -> about/about.html fallback */
@@ -380,19 +419,19 @@ static void test_static_filesystem_directory_fallback(void) {
 
     MU_ASSERT_EQ_INT(0, cerver_serve_static(&srv, &req, &res));
     MU_ASSERT_EQ_SIZE(13, res.body_len);
-    if (res._body_owned == 3 && res._file_fd >= 0) close(res._file_fd);
+    if (res._body_owned == 3 && res._file_fd >= 0) cerver_test_close(res._file_fd);
   }
 
-  unlink(file_path);
-  unlink(file_path2);
-  unlink(file_path3);
-  rmdir(sub_dir);
-  rmdir(dir);
+  cerver_test_unlink(file_path);
+  cerver_test_unlink(file_path2);
+  cerver_test_unlink(file_path3);
+  cerver_test_rmdir(sub_dir);
+  cerver_test_rmdir(dir);
 }
 
 static void test_static_filesystem_small(void) {
   char  dir_template[] = "/tmp/cerver-test-XXXXXX";
-  char* dir            = mkdtemp(dir_template);
+  char* dir            = cerver_test_mkdtemp(dir_template);
   MU_ASSERT(dir != NULL);
 
   char file_path[PATH_MAX];
@@ -417,29 +456,29 @@ static void test_static_filesystem_small(void) {
   MU_ASSERT(res._file_fd >= 0);
 
   int fds[2];
-  MU_ASSERT(pipe(fds) == 0);
+  MU_ASSERT(cerver_test_pipe(fds) == 0);
   MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
-  close(fds[1]);
+  cerver_test_close(fds[1]);
 
   char    out[1024];
   ssize_t n = read_all(fds[0], out, sizeof(out));
   MU_ASSERT(n > 0);
-  close(fds[0]);
+  cerver_test_close(fds[0]);
 
   MU_ASSERT(strstr(out, "HTTP/1.1 200 OK\r\n") != NULL);
   MU_ASSERT(strstr(out, "Content-Length: 5\r\n") != NULL);
   MU_ASSERT(strstr(out, "\r\nsmall") != NULL);
 
   if (res._body_owned == 3 && res._file_fd >= 0) {
-    close(res._file_fd);
+    cerver_test_close(res._file_fd);
   }
-  unlink(file_path);
-  rmdir(dir);
+  cerver_test_unlink(file_path);
+  cerver_test_rmdir(dir);
 }
 
 static void test_static_filesystem_large(void) {
   char  dir_template[] = "/tmp/cerver-test-XXXXXX";
-  char* dir            = mkdtemp(dir_template);
+  char* dir            = cerver_test_mkdtemp(dir_template);
   MU_ASSERT(dir != NULL);
 
   char file_path[PATH_MAX];
@@ -469,23 +508,23 @@ static void test_static_filesystem_large(void) {
   MU_ASSERT(res._file_fd >= 0);
 
   int fds[2];
-  MU_ASSERT(pipe(fds) == 0);
+  MU_ASSERT(cerver_test_pipe(fds) == 0);
   MU_ASSERT_EQ_INT(0, cerver_write_response(fds[1], &res, 1));
-  close(fds[1]);
+  cerver_test_close(fds[1]);
 
   char    out[35000];
   ssize_t n = read_all(fds[0], out, sizeof(out));
   MU_ASSERT(n > 0);
-  close(fds[0]);
+  cerver_test_close(fds[0]);
 
   MU_ASSERT(strstr(out, "HTTP/1.1 200 OK\r\n") != NULL);
   MU_ASSERT(strstr(out, "Content-Length: 32000\r\n") != NULL);
 
   if (res._body_owned == 3 && res._file_fd >= 0) {
-    close(res._file_fd);
+    cerver_test_close(res._file_fd);
   }
-  unlink(file_path);
-  rmdir(dir);
+  cerver_test_unlink(file_path);
+  cerver_test_rmdir(dir);
 }
 
 static void test_static_rejects_unsafe_path(void) {
@@ -517,8 +556,8 @@ static void test_cerver_init_fields(void) {
   cerver_server_t srv;
   cerver_init(&srv, 9090, 3);
   MU_ASSERT_EQ_INT(9090, srv.port);
-  MU_ASSERT_EQ_INT(3, srv.worker_count);
-  MU_ASSERT_EQ_INT(-1, srv.sock_fd);
+  MU_ASSERT_EQ_INT(3, srv.connection_worker_count);
+  MU_ASSERT(srv.sock_fd == CERVER_INVALID_SOCK);
   MU_ASSERT_EQ_INT(0, srv.running);
 }
 

@@ -13,13 +13,7 @@
 #include <string.h>
 #include <errno.h>
 
-/* MinGW links against the MSVC runtime which does not understand %zu.
- * Use the Windows-specific %Iu (pointer-sized unsigned) instead. */
-#if CERVER_PLATFORM_WINDOWS
-#  define CERVER_FMT_ZU "%Iu"
-#else
-#  define CERVER_FMT_ZU "%zu"
-#endif  // CERVER_PLATFORM_WINDOWS
+/* Size formatting uses %zu with unsigned long long cast to avoid MinGW warnings */
 
 #if !CERVER_PLATFORM_WINDOWS
 #include <unistd.h>
@@ -156,7 +150,7 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
   if (res->content_type)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Type: %s\r\n",
                      res->content_type);
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Length: " CERVER_FMT_ZU "\r\n",
+  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Length: %zu\r\n",
                    res->body_len);
   for (int i = 0; i < res->header_count; i++)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "%s: %s\r\n",

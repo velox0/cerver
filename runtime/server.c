@@ -1,16 +1,16 @@
 /*
- * server.c — Hybrid event-loop + thread-pool server for the cerver runtime.
+ * server.c — Hybrid event-loop + connection-worker server for the cerver runtime.
  *
  * Cross-platform: Linux (epoll), macOS/BSD (kqueue), Windows (select/IOCP-ready),
  * and any other POSIX platform (select fallback).
  *
  * Architecture:
  *   - 1 acceptor thread per core with its own kqueue/epoll (accept only)
- *   - Shared connection thread pool (configurable size, default 128)
+ *   - Shared connection worker pool (configurable size, default 128)
  *   - Acceptors never block — they push fds into a shared queue guarded by a mutex/condvar
- *   - Pool workers handle full request lifecycle including keep-alive
+ *   - Connection workers handle full request lifecycle including keep-alive
  *   - On Linux: SO_REUSEPORT per acceptor; on macOS: shared listener
- *   - On Windows: Winsock2, select-based acceptor, pthreads-win32
+ *   - On Windows: Winsock2, select-based acceptor, native Windows threads
  */
 
 #include "win_compat.h" /* Must come first on Windows */
@@ -22,7 +22,6 @@
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
-#include <pthread.h>
 
 #if !CERVER_PLATFORM_WINDOWS
 #include <unistd.h>
@@ -56,9 +55,9 @@
 #include <sched.h>
 #endif  // __linux__
 
-/* Connection pool sizing */
-#define CERVER_CONN_POOL_SIZE  128
-#define CERVER_CONN_QUEUE_SIZE 4096
+/* Connection worker sizing */
+#define CERVER_CONNECTION_WORKER_POOL_MIN 128
+#define CERVER_CONN_QUEUE_SIZE            4096
 
 /* ------------------------------------------------------------------ */
 /*  memmem fallback (also defined in win_compat.h for Windows)        */
@@ -117,88 +116,88 @@ static void best_effort_write(cerver_sock_t fd, const char* buf, size_t len) {
 static void cerver_platform_close(cerver_sock_t fd) { cerver_close_sock(fd); }
 
 /* ------------------------------------------------------------------ */
-/*  Connection queue (shared between acceptors and pool workers)       */
+/*  Connection queue (shared between acceptors and connection workers) */
 /* ------------------------------------------------------------------ */
 
 typedef struct {
-  cerver_sock_t   fds[CERVER_CONN_QUEUE_SIZE];
-  int             head;
-  int             tail;
-  int             count;
-  pthread_mutex_t lock;
-  pthread_cond_t  not_empty;
+  cerver_sock_t  fds[CERVER_CONN_QUEUE_SIZE];
+  int            head;
+  int            tail;
+  int            count;
+  cerver_mutex_t lock;
+  cerver_cond_t  not_empty;
 } conn_queue_t;
 
 static void cq_init(conn_queue_t* q) {
   for (int i = 0; i < CERVER_CONN_QUEUE_SIZE; i++) q->fds[i] = CERVER_INVALID_SOCK;
   q->head = q->tail = q->count = 0;
-  pthread_mutex_init(&q->lock, NULL);
-  pthread_cond_init(&q->not_empty, NULL);
+  cerver_mutex_init(&q->lock, NULL);
+  cerver_cond_init(&q->not_empty, NULL);
 }
 
 static void cq_destroy(conn_queue_t* q) {
-  pthread_mutex_destroy(&q->lock);
-  pthread_cond_destroy(&q->not_empty);
+  cerver_mutex_destroy(&q->lock);
+  cerver_cond_destroy(&q->not_empty);
 }
 
 /* Returns 0 on success, -1 if queue is full. */
 static int cq_push(conn_queue_t* q, cerver_sock_t fd) {
-  pthread_mutex_lock(&q->lock);
+  cerver_mutex_lock(&q->lock);
   if (q->count >= CERVER_CONN_QUEUE_SIZE) {
-    pthread_mutex_unlock(&q->lock);
+    cerver_mutex_unlock(&q->lock);
     return -1;
   }
   q->fds[q->tail] = fd;
   q->tail         = (q->tail + 1) % CERVER_CONN_QUEUE_SIZE;
   q->count++;
-  pthread_cond_signal(&q->not_empty);
-  pthread_mutex_unlock(&q->lock);
+  cerver_cond_signal(&q->not_empty);
+  cerver_mutex_unlock(&q->lock);
   return 0;
 }
 
 /* Returns fd, or CERVER_INVALID_SOCK on shutdown. */
 static cerver_sock_t cq_pop(conn_queue_t* q, volatile int* running) {
-  pthread_mutex_lock(&q->lock);
+  cerver_mutex_lock(&q->lock);
   while (q->count == 0 && *running) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += 1;
-    pthread_cond_timedwait(&q->not_empty, &q->lock, &ts);
+    cerver_cond_timedwait(&q->not_empty, &q->lock, &ts);
   }
   if (q->count == 0) {
-    pthread_mutex_unlock(&q->lock);
+    cerver_mutex_unlock(&q->lock);
     return CERVER_INVALID_SOCK;
   }
   cerver_sock_t fd = q->fds[q->head];
   q->head          = (q->head + 1) % CERVER_CONN_QUEUE_SIZE;
   q->count--;
-  pthread_mutex_unlock(&q->lock);
+  cerver_mutex_unlock(&q->lock);
   return fd;
 }
 
 static conn_queue_t g_conn_queue;
 
-/* Worker / acceptor readiness tracking */
+/* Connection worker / acceptor readiness tracking */
 typedef struct {
-  int             workers_ready;
-  int             workers_expected;
-  pthread_mutex_t lock;
-  pthread_cond_t  ready_cv;
-} worker_readiness_t;
+  int            connection_workers_ready;
+  int            connection_workers_expected;
+  cerver_mutex_t lock;
+  cerver_cond_t  ready_cv;
+} connection_worker_readiness_t;
 
-static worker_readiness_t g_worker_readiness = {0, 0, PTHREAD_MUTEX_INITIALIZER,
-                                                PTHREAD_COND_INITIALIZER};
+static connection_worker_readiness_t g_connection_worker_readiness = {
+    0, 0, CERVER_MUTEX_INITIALIZER, CERVER_COND_INITIALIZER};
 
 typedef struct {
-  int             acceptors_ready;
-  int             start_accepting;
-  pthread_mutex_t lock;
-  pthread_cond_t  ready_cv;
-  pthread_cond_t  start_cv;
+  int            acceptors_ready;
+  int            start_accepting;
+  cerver_mutex_t lock;
+  cerver_cond_t  ready_cv;
+  cerver_cond_t  start_cv;
 } acceptor_readiness_t;
 
 static acceptor_readiness_t g_acceptor_readiness = {
-    0, 0, PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
+    0, 0, CERVER_MUTEX_INITIALIZER, CERVER_COND_INITIALIZER, CERVER_COND_INITIALIZER};
 
 /* ------------------------------------------------------------------ */
 /*  Buffered read                                                     */
@@ -209,6 +208,11 @@ static char* read_full_request(cerver_sock_t fd, size_t* out_len) {
   size_t len = 0;
   char*  buf = malloc(cap + 1);
   if (!buf) return NULL;
+
+#if CERVER_PLATFORM_WINDOWS
+  /* On Windows set a blocking recv timeout via SO_RCVTIMEO (already set
+     per-connection in handle_connection).  Just read normally. */
+#endif  // CERVER_PLATFORM_WINDOWS
 
   while (len < (size_t)CERVER_READ_BUF_MAX) {
     ssize_t n = (ssize_t)cerver_sock_read(fd, buf + len, cap - len);
@@ -327,16 +331,16 @@ static void handle_connection(cerver_server_t* srv, cerver_sock_t client_fd) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Connection pool worker thread                                     */
+/*  Connection worker thread                                          */
 /* ------------------------------------------------------------------ */
 
-static void* conn_pool_worker(void* arg) {
+static void* connection_worker_loop(void* arg) {
   cerver_server_t* srv = (cerver_server_t*)arg;
 
-  pthread_mutex_lock(&g_worker_readiness.lock);
-  g_worker_readiness.workers_ready++;
-  pthread_cond_broadcast(&g_worker_readiness.ready_cv);
-  pthread_mutex_unlock(&g_worker_readiness.lock);
+  cerver_mutex_lock(&g_connection_worker_readiness.lock);
+  g_connection_worker_readiness.connection_workers_ready++;
+  cerver_cond_broadcast(&g_connection_worker_readiness.ready_cv);
+  cerver_mutex_unlock(&g_connection_worker_readiness.lock);
 
   while (srv->running) {
     cerver_sock_t fd = cq_pop(&g_conn_queue, &srv->running);
@@ -346,29 +350,29 @@ static void* conn_pool_worker(void* arg) {
   return NULL;
 }
 
-static int wait_for_pool_workers_ready(cerver_server_t* srv, int expected) {
-  pthread_mutex_lock(&g_worker_readiness.lock);
-  while (g_worker_readiness.workers_ready < expected && srv->running)
-    pthread_cond_wait(&g_worker_readiness.ready_cv, &g_worker_readiness.lock);
-  int ready = (g_worker_readiness.workers_ready >= expected);
-  pthread_mutex_unlock(&g_worker_readiness.lock);
+static int wait_for_connection_workers_ready(cerver_server_t* srv, int expected) {
+  cerver_mutex_lock(&g_connection_worker_readiness.lock);
+  while (g_connection_worker_readiness.connection_workers_ready < expected && srv->running)
+    cerver_cond_wait(&g_connection_worker_readiness.ready_cv, &g_connection_worker_readiness.lock);
+  int ready = (g_connection_worker_readiness.connection_workers_ready >= expected);
+  cerver_mutex_unlock(&g_connection_worker_readiness.lock);
   return ready;
 }
 
 static int wait_for_acceptors_ready(cerver_server_t* srv, int expected) {
-  pthread_mutex_lock(&g_acceptor_readiness.lock);
+  cerver_mutex_lock(&g_acceptor_readiness.lock);
   while (g_acceptor_readiness.acceptors_ready < expected && srv->running)
-    pthread_cond_wait(&g_acceptor_readiness.ready_cv, &g_acceptor_readiness.lock);
+    cerver_cond_wait(&g_acceptor_readiness.ready_cv, &g_acceptor_readiness.lock);
   int ready = (g_acceptor_readiness.acceptors_ready >= expected);
-  pthread_mutex_unlock(&g_acceptor_readiness.lock);
+  cerver_mutex_unlock(&g_acceptor_readiness.lock);
   return ready;
 }
 
 static void release_acceptors(void) {
-  pthread_mutex_lock(&g_acceptor_readiness.lock);
+  cerver_mutex_lock(&g_acceptor_readiness.lock);
   g_acceptor_readiness.start_accepting = 1;
-  pthread_cond_broadcast(&g_acceptor_readiness.start_cv);
-  pthread_mutex_unlock(&g_acceptor_readiness.lock);
+  cerver_cond_broadcast(&g_acceptor_readiness.start_cv);
+  cerver_mutex_unlock(&g_acceptor_readiness.lock);
 }
 
 /* ------------------------------------------------------------------ */
@@ -392,11 +396,11 @@ static cerver_sock_t create_listener(int port, int reuseport) {
   int opt = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, CERVER_SETSOCKOPT_CAST & opt, sizeof(opt));
 
-#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(SO_REUSEPORT)
   if (reuseport) setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #else
   (void)reuseport;
-#endif  // __linux__ || __APPLE__ || __FreeBSD__
+#endif  // SO_REUSEPORT
 
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
@@ -426,11 +430,16 @@ static cerver_sock_t create_listener(int port, int reuseport) {
 static cerver_sock_t accept_connection(cerver_sock_t listen_fd) {
   struct sockaddr_in ca;
   socklen_t          cl = sizeof(ca);
-#if defined(__linux__)
-  return accept4(listen_fd, (struct sockaddr*)&ca, &cl, SOCK_CLOEXEC);
-#else
-  return accept(listen_fd, (struct sockaddr*)&ca, &cl);
-#endif  // __linux__
+  cerver_sock_t      fd = accept(listen_fd, (struct sockaddr*)&ca, &cl);
+#if !CERVER_PLATFORM_WINDOWS
+#if defined(FD_CLOEXEC)
+  if (fd >= 0) {
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+  }
+#endif  // FD_CLOEXEC
+#endif  // !CERVER_PLATFORM_WINDOWS
+  return fd;
 }
 
 /* ------------------------------------------------------------------ */
@@ -440,28 +449,28 @@ static cerver_sock_t accept_connection(cerver_sock_t listen_fd) {
 #if defined(CERVER_USE_KQUEUE)
 
 static void* acceptor_loop(void* arg) {
-  cerver_worker_t* w   = (cerver_worker_t*)arg;
-  cerver_server_t* srv = w->srv;
+  cerver_acceptor_t* acceptor = (cerver_acceptor_t*)arg;
+  cerver_server_t*   srv      = acceptor->srv;
 
   int kq = kqueue();
   if (kq < 0) {
     perror("cerver: kqueue");
     return NULL;
   }
-  w->event_fd = kq;
+  acceptor->event_fd = kq;
 
   struct kevent change;
-  EV_SET(&change, w->listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+  EV_SET(&change, acceptor->listen_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
   kevent(kq, &change, 1, NULL, 0, NULL);
 
   struct kevent events[CERVER_MAX_EVENTS];
 
-  pthread_mutex_lock(&g_acceptor_readiness.lock);
+  cerver_mutex_lock(&g_acceptor_readiness.lock);
   g_acceptor_readiness.acceptors_ready++;
-  pthread_cond_broadcast(&g_acceptor_readiness.ready_cv);
+  cerver_cond_broadcast(&g_acceptor_readiness.ready_cv);
   while (!g_acceptor_readiness.start_accepting && srv->running)
-    pthread_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
-  pthread_mutex_unlock(&g_acceptor_readiness.lock);
+    cerver_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
+  cerver_mutex_unlock(&g_acceptor_readiness.lock);
 
   while (srv->running) {
     struct timespec ts  = {1, 0};
@@ -471,9 +480,9 @@ static void* acceptor_loop(void* arg) {
       break;
     }
     for (int i = 0; i < nev; i++) {
-      if ((int)events[i].ident == w->listen_fd) {
+      if ((int)events[i].ident == acceptor->listen_fd) {
         while (1) {
-          cerver_sock_t cfd = accept_connection(w->listen_fd);
+          cerver_sock_t cfd = accept_connection(acceptor->listen_fd);
           if (cfd == CERVER_INVALID_SOCK) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             break;
@@ -497,27 +506,27 @@ static void* acceptor_loop(void* arg) {
 #elif defined(CERVER_USE_EPOLL)
 
 static void* acceptor_loop(void* arg) {
-  cerver_worker_t* w   = (cerver_worker_t*)arg;
-  cerver_server_t* srv = w->srv;
+  cerver_acceptor_t* acceptor = (cerver_acceptor_t*)arg;
+  cerver_server_t*   srv      = acceptor->srv;
 
   int ep = epoll_create1(EPOLL_CLOEXEC);
   if (ep < 0) {
     perror("cerver: epoll");
     return NULL;
   }
-  w->event_fd = ep;
+  acceptor->event_fd = ep;
 
-  struct epoll_event ev = {.events = EPOLLIN, .data.fd = w->listen_fd};
-  epoll_ctl(ep, EPOLL_CTL_ADD, w->listen_fd, &ev);
+  struct epoll_event ev = {.events = EPOLLIN, .data.fd = acceptor->listen_fd};
+  epoll_ctl(ep, EPOLL_CTL_ADD, acceptor->listen_fd, &ev);
 
   struct epoll_event events[CERVER_MAX_EVENTS];
 
-  pthread_mutex_lock(&g_acceptor_readiness.lock);
+  cerver_mutex_lock(&g_acceptor_readiness.lock);
   g_acceptor_readiness.acceptors_ready++;
-  pthread_cond_broadcast(&g_acceptor_readiness.ready_cv);
+  cerver_cond_broadcast(&g_acceptor_readiness.ready_cv);
   while (!g_acceptor_readiness.start_accepting && srv->running)
-    pthread_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
-  pthread_mutex_unlock(&g_acceptor_readiness.lock);
+    cerver_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
+  cerver_mutex_unlock(&g_acceptor_readiness.lock);
 
   while (srv->running) {
     int nev = epoll_wait(ep, events, CERVER_MAX_EVENTS, 1000);
@@ -526,9 +535,9 @@ static void* acceptor_loop(void* arg) {
       break;
     }
     for (int i = 0; i < nev; i++) {
-      if (events[i].data.fd == w->listen_fd) {
+      if (events[i].data.fd == acceptor->listen_fd) {
         while (1) {
-          cerver_sock_t cfd = accept_connection(w->listen_fd);
+          cerver_sock_t cfd = accept_connection(acceptor->listen_fd);
           if (cfd < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             break;
@@ -549,23 +558,23 @@ static void* acceptor_loop(void* arg) {
   return NULL;
 }
 
-#else
+#else /* SELECT — used on Windows and other POSIX platforms */
 
 static void* acceptor_loop(void* arg) {
-  cerver_worker_t* w   = (cerver_worker_t*)arg;
-  cerver_server_t* srv = w->srv;
+  cerver_acceptor_t* acceptor = (cerver_acceptor_t*)arg;
+  cerver_server_t*   srv      = acceptor->srv;
 
-  pthread_mutex_lock(&g_acceptor_readiness.lock);
+  cerver_mutex_lock(&g_acceptor_readiness.lock);
   g_acceptor_readiness.acceptors_ready++;
-  pthread_cond_broadcast(&g_acceptor_readiness.ready_cv);
+  cerver_cond_broadcast(&g_acceptor_readiness.ready_cv);
   while (!g_acceptor_readiness.start_accepting && srv->running)
-    pthread_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
-  pthread_mutex_unlock(&g_acceptor_readiness.lock);
+    cerver_cond_wait(&g_acceptor_readiness.start_cv, &g_acceptor_readiness.lock);
+  cerver_mutex_unlock(&g_acceptor_readiness.lock);
 
   while (srv->running) {
     fd_set rfds;
     FD_ZERO(&rfds);
-    FD_SET(w->listen_fd, &rfds);
+    FD_SET(acceptor->listen_fd, &rfds);
 
 #if CERVER_PLATFORM_WINDOWS
     /* Windows select takes (nfds, ...) but ignores the first arg for sockets */
@@ -573,7 +582,7 @@ static void* acceptor_loop(void* arg) {
     int            ret = select(0, &rfds, NULL, NULL, &tv);
 #else
     struct timeval tv  = {1, 0};
-    int            ret = select((int)w->listen_fd + 1, &rfds, NULL, NULL, &tv);
+    int            ret = select((int)acceptor->listen_fd + 1, &rfds, NULL, NULL, &tv);
 #endif  // CERVER_PLATFORM_WINDOWS
     if (ret < 0) {
 #if CERVER_PLATFORM_WINDOWS
@@ -583,9 +592,9 @@ static void* acceptor_loop(void* arg) {
 #endif  // CERVER_PLATFORM_WINDOWS
       break;
     }
-    if (ret > 0 && FD_ISSET(w->listen_fd, &rfds)) {
+    if (ret > 0 && FD_ISSET(acceptor->listen_fd, &rfds)) {
       while (1) {
-        cerver_sock_t cfd = accept_connection(w->listen_fd);
+        cerver_sock_t cfd = accept_connection(acceptor->listen_fd);
         if (cfd == CERVER_INVALID_SOCK) {
 #if CERVER_PLATFORM_WINDOWS
           if (cerver_would_block_win()) break;
@@ -610,32 +619,32 @@ static void* acceptor_loop(void* arg) {
 
 void cerver_stat_cache_init(cerver_stat_cache_t* cache) {
   memset(cache, 0, sizeof(*cache));
-  pthread_mutex_init(&cache->lock, NULL);
+  cerver_mutex_init(&cache->lock, NULL);
 }
 
 int cerver_stat_cache_lookup(cerver_stat_cache_t* cache, const char* path, size_t* file_size) {
   time_t now = time(NULL);
-  pthread_mutex_lock(&cache->lock);
+  cerver_mutex_lock(&cache->lock);
   for (int i = 0; i < CERVER_STAT_CACHE_SIZE; i++) {
     cerver_stat_entry_t* e = &cache->entries[i];
     if (e->valid && strcmp(e->path, path) == 0) {
       if (now - e->cached_at < CERVER_STAT_CACHE_TTL) {
         *file_size = e->file_size;
-        pthread_mutex_unlock(&cache->lock);
+        cerver_mutex_unlock(&cache->lock);
         return 0;
       }
       e->valid = 0;
       break;
     }
   }
-  pthread_mutex_unlock(&cache->lock);
+  cerver_mutex_unlock(&cache->lock);
   return -1;
 }
 
 void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_t file_size,
                              time_t mtime) {
   time_t now = time(NULL);
-  pthread_mutex_lock(&cache->lock);
+  cerver_mutex_lock(&cache->lock);
   int    best   = 0;
   time_t oldest = cache->entries[0].cached_at;
   for (int i = 0; i < CERVER_STAT_CACHE_SIZE; i++) {
@@ -656,7 +665,7 @@ void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_
   slot->mtime                        = mtime;
   slot->cached_at                    = now;
   slot->valid                        = 1;
-  pthread_mutex_unlock(&cache->lock);
+  cerver_mutex_unlock(&cache->lock);
 }
 
 /* ------------------------------------------------------------------ */
@@ -665,10 +674,10 @@ void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_
 
 int cerver_init(cerver_server_t* srv, int port, int threads) {
   memset(srv, 0, sizeof(*srv));
-  srv->port         = port;
-  srv->sock_fd      = CERVER_INVALID_SOCK;
-  srv->running      = 0;
-  srv->worker_count = (threads > 0) ? threads : get_cpu_count();
+  srv->port                    = port;
+  srv->sock_fd                 = CERVER_INVALID_SOCK;
+  srv->running                 = 0;
+  srv->connection_worker_count = (threads > 0) ? threads : get_cpu_count();
   cerver_stat_cache_init(&srv->stat_cache);
 #if CERVER_PLATFORM_WINDOWS
   cerver_wsa_startup();
@@ -710,10 +719,11 @@ int cerver_listen(cerver_server_t* srv) {
   srv->running        = 1;
   srv->acceptor_count = 0;
 
-  int cpu_count               = get_cpu_count();
-  int configured_worker_count = srv->worker_count;
-  int acceptor_count          = cpu_count;
-  if (acceptor_count > configured_worker_count) acceptor_count = configured_worker_count;
+  int cpu_count                          = get_cpu_count();
+  int configured_connection_worker_count = srv->connection_worker_count;
+  int acceptor_count                     = cpu_count;
+  if (acceptor_count > configured_connection_worker_count)
+    acceptor_count = configured_connection_worker_count;
   if (acceptor_count < 1) acceptor_count = 1;
 
   /* Windows select-based acceptor: limit to 1 until IOCP is wired */
@@ -721,88 +731,102 @@ int cerver_listen(cerver_server_t* srv) {
   acceptor_count = 1;
 #endif  // CERVER_PLATFORM_WINDOWS
 
-  int pool_size = configured_worker_count * 16;
-  if (pool_size < CERVER_CONN_POOL_SIZE) pool_size = CERVER_CONN_POOL_SIZE;
-  if (pool_size > 1024) pool_size = 1024;
+  int connection_worker_thread_count = configured_connection_worker_count * 16;
+  if (connection_worker_thread_count < CERVER_CONNECTION_WORKER_POOL_MIN)
+    connection_worker_thread_count = CERVER_CONNECTION_WORKER_POOL_MIN;
+  if (connection_worker_thread_count > 1024) connection_worker_thread_count = 1024;
 
   cq_init(&g_conn_queue);
 
-  pthread_mutex_lock(&g_worker_readiness.lock);
-  g_worker_readiness.workers_ready    = 0;
-  g_worker_readiness.workers_expected = pool_size;
-  pthread_mutex_unlock(&g_worker_readiness.lock);
+  cerver_mutex_lock(&g_connection_worker_readiness.lock);
+  g_connection_worker_readiness.connection_workers_ready    = 0;
+  g_connection_worker_readiness.connection_workers_expected = connection_worker_thread_count;
+  cerver_mutex_unlock(&g_connection_worker_readiness.lock);
 
-  pthread_mutex_lock(&g_acceptor_readiness.lock);
+  cerver_mutex_lock(&g_acceptor_readiness.lock);
   g_acceptor_readiness.acceptors_ready = 0;
   g_acceptor_readiness.start_accepting = 0;
-  pthread_mutex_unlock(&g_acceptor_readiness.lock);
+  cerver_mutex_unlock(&g_acceptor_readiness.lock);
 
-  pthread_t* pool_threads = calloc((size_t)pool_size, sizeof(pthread_t));
-  if (!pool_threads) {
-    perror("cerver: calloc pool");
+  cerver_connection_worker_thread_t* connection_workers =
+      calloc((size_t)connection_worker_thread_count, sizeof(cerver_connection_worker_thread_t));
+  if (!connection_workers) {
+    perror("cerver: calloc connection workers");
     return -1;
   }
 
-  pthread_attr_t attr;
-  pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 2 * 1024 * 1024);
+  cerver_connection_worker_thread_attr_t worker_attr;
+  cerver_acceptor_thread_attr_t          acceptor_attr;
+  cerver_connection_worker_thread_attr_init(&worker_attr);
+  cerver_acceptor_thread_attr_init(&acceptor_attr);
+  cerver_connection_worker_thread_attr_setstacksize(&worker_attr, 2 * 1024 * 1024);
+  cerver_acceptor_thread_attr_setstacksize(&acceptor_attr, 2 * 1024 * 1024);
 
-  for (int i = 0; i < pool_size; i++) {
-    if (pthread_create(&pool_threads[i], &attr, conn_pool_worker, srv) != 0) {
-      perror("cerver: pool thread create");
+  for (int i = 0; i < connection_worker_thread_count; i++) {
+    if (cerver_connection_worker_thread_create(&connection_workers[i], &worker_attr,
+                                               connection_worker_loop, srv) != 0) {
+      perror("cerver: connection worker thread create");
       srv->running = 0;
-      for (int j = 0; j < i; j++) pthread_join(pool_threads[j], NULL);
-      free(pool_threads);
-      pthread_attr_destroy(&attr);
+      for (int j = 0; j < i; j++) cerver_connection_worker_thread_join(connection_workers[j], NULL);
+      free(connection_workers);
+      cerver_connection_worker_thread_attr_destroy(&worker_attr);
+      cerver_acceptor_thread_attr_destroy(&acceptor_attr);
       return -1;
     }
   }
 
-  if (!wait_for_pool_workers_ready(srv, pool_size)) {
+  if (!wait_for_connection_workers_ready(srv, connection_worker_thread_count)) {
     srv->running = 0;
-    for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
-    free(pool_threads);
-    pthread_attr_destroy(&attr);
+    for (int i = 0; i < connection_worker_thread_count; i++)
+      cerver_connection_worker_thread_join(connection_workers[i], NULL);
+    free(connection_workers);
+    cerver_connection_worker_thread_attr_destroy(&worker_attr);
+    cerver_acceptor_thread_attr_destroy(&acceptor_attr);
     return -1;
   }
 
   srv->sock_fd = create_listener(srv->port, 1);
   if (srv->sock_fd == CERVER_INVALID_SOCK) {
     srv->running = 0;
-    for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
-    free(pool_threads);
-    pthread_attr_destroy(&attr);
+    for (int i = 0; i < connection_worker_thread_count; i++)
+      cerver_connection_worker_thread_join(connection_workers[i], NULL);
+    free(connection_workers);
+    cerver_connection_worker_thread_attr_destroy(&worker_attr);
+    cerver_acceptor_thread_attr_destroy(&acceptor_attr);
     return -1;
   }
 
-  srv->workers        = calloc((size_t)acceptor_count, sizeof(cerver_worker_t));
+  srv->acceptors      = calloc((size_t)acceptor_count, sizeof(cerver_acceptor_t));
   srv->acceptor_count = acceptor_count;
-  if (!srv->workers) {
+  if (!srv->acceptors) {
     perror("cerver: calloc acceptors");
     srv->running = 0;
-    pthread_cond_broadcast(&g_conn_queue.not_empty);
-    for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
-    free(pool_threads);
+    cerver_cond_broadcast(&g_conn_queue.not_empty);
+    for (int i = 0; i < connection_worker_thread_count; i++)
+      cerver_connection_worker_thread_join(connection_workers[i], NULL);
+    free(connection_workers);
     cerver_platform_close(srv->sock_fd);
-    pthread_attr_destroy(&attr);
+    cerver_connection_worker_thread_attr_destroy(&worker_attr);
+    cerver_acceptor_thread_attr_destroy(&acceptor_attr);
     return -1;
   }
 
   for (int i = 0; i < acceptor_count; i++) {
-    cerver_worker_t* w = &srv->workers[i];
-    w->id              = i;
-    w->srv             = srv;
-    w->event_fd        = -1;
+    cerver_acceptor_t* acceptor = &srv->acceptors[i];
+    acceptor->id                = i;
+    acceptor->srv               = srv;
+    acceptor->event_fd          = -1;
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-    w->listen_fd = (i == 0) ? srv->sock_fd : create_listener(srv->port, 1);
-    if (w->listen_fd == CERVER_INVALID_SOCK) w->listen_fd = srv->sock_fd;
+    acceptor->listen_fd = (i == 0) ? srv->sock_fd : create_listener(srv->port, 1);
+    if (acceptor->listen_fd == CERVER_INVALID_SOCK) acceptor->listen_fd = srv->sock_fd;
 #else
-    w->listen_fd = srv->sock_fd;
+    acceptor->listen_fd = srv->sock_fd;
 #endif  // __linux__ || __APPLE__ || __FreeBSD__
-    if (pthread_create(&w->thread, &attr, acceptor_loop, w) != 0) {
+    if (cerver_acceptor_thread_create(&acceptor->thread, &acceptor_attr, acceptor_loop, acceptor) !=
+        0) {
       perror("cerver: acceptor create");
       srv->running = 0;
-      for (int j = 0; j < i; j++) pthread_join(srv->workers[j].thread, NULL);
+      for (int j = 0; j < i; j++) cerver_acceptor_thread_join(srv->acceptors[j].thread, NULL);
       break;
     }
   }
@@ -810,16 +834,19 @@ int cerver_listen(cerver_server_t* srv) {
   if (!wait_for_acceptors_ready(srv, acceptor_count)) {
     srv->running = 0;
     release_acceptors();
-    for (int i = 0; i < acceptor_count; i++) pthread_join(srv->workers[i].thread, NULL);
-    for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
-    free(pool_threads);
-    pthread_attr_destroy(&attr);
+    for (int i = 0; i < acceptor_count; i++)
+      cerver_acceptor_thread_join(srv->acceptors[i].thread, NULL);
+    for (int i = 0; i < connection_worker_thread_count; i++)
+      cerver_connection_worker_thread_join(connection_workers[i], NULL);
+    free(connection_workers);
+    cerver_connection_worker_thread_attr_destroy(&worker_attr);
+    cerver_acceptor_thread_attr_destroy(&acceptor_attr);
     return -1;
   }
 
   printf("cerver: listening on http://localhost:%d\n", srv->port);
   printf("cerver: %d acceptor(s), %d connection workers, keep-alive max %d req/conn\n",
-         acceptor_count, pool_size, CERVER_KEEPALIVE_MAX);
+         acceptor_count, connection_worker_thread_count, CERVER_KEEPALIVE_MAX);
 
   for (int i = 0; i < srv->route_count; i++) {
     const char* method = srv->routes[i].method;
@@ -838,21 +865,24 @@ int cerver_listen(cerver_server_t* srv) {
   fflush(stdout);
 
   release_acceptors();
-  pthread_attr_destroy(&attr);
+  cerver_connection_worker_thread_attr_destroy(&worker_attr);
+  cerver_acceptor_thread_attr_destroy(&acceptor_attr);
 
   /* Main thread spin — sleep(1) works on all platforms via win_compat.h macro */
   while (srv->running) sleep(1);
 
   /* Shutdown */
   srv->running = 0;
-  for (int i = 0; i < acceptor_count; i++) pthread_join(srv->workers[i].thread, NULL);
+  for (int i = 0; i < acceptor_count; i++)
+    cerver_acceptor_thread_join(srv->acceptors[i].thread, NULL);
 
-  pthread_mutex_lock(&g_conn_queue.lock);
-  pthread_cond_broadcast(&g_conn_queue.not_empty);
-  pthread_mutex_unlock(&g_conn_queue.lock);
+  cerver_mutex_lock(&g_conn_queue.lock);
+  cerver_cond_broadcast(&g_conn_queue.not_empty);
+  cerver_mutex_unlock(&g_conn_queue.lock);
 
-  for (int i = 0; i < pool_size; i++) pthread_join(pool_threads[i], NULL);
-  free(pool_threads);
+  for (int i = 0; i < connection_worker_thread_count; i++)
+    cerver_connection_worker_thread_join(connection_workers[i], NULL);
+  free(connection_workers);
 
   cerver_shutdown(srv);
   return 0;
@@ -865,22 +895,22 @@ int cerver_listen(cerver_server_t* srv) {
 void cerver_shutdown(cerver_server_t* srv) {
   srv->running = 0;
 
-  if (srv->workers) {
+  if (srv->acceptors) {
     for (int i = 0; i < srv->acceptor_count; i++) {
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
-      if (srv->workers[i].listen_fd != srv->sock_fd &&
-          srv->workers[i].listen_fd != CERVER_INVALID_SOCK)
-        cerver_platform_close(srv->workers[i].listen_fd);
+      if (srv->acceptors[i].listen_fd != srv->sock_fd &&
+          srv->acceptors[i].listen_fd != CERVER_INVALID_SOCK)
+        cerver_platform_close(srv->acceptors[i].listen_fd);
 #endif  // __linux__ || __APPLE__ || __FreeBSD__
-      if (srv->workers[i].event_fd >= 0)
+      if (srv->acceptors[i].event_fd >= 0)
 #if !CERVER_PLATFORM_WINDOWS
-        close(srv->workers[i].event_fd);
+        close(srv->acceptors[i].event_fd);
 #else
-        closesocket((SOCKET)srv->workers[i].event_fd);
+        closesocket((SOCKET)srv->acceptors[i].event_fd);
 #endif  // !CERVER_PLATFORM_WINDOWS
     }
-    free(srv->workers);
-    srv->workers = NULL;
+    free(srv->acceptors);
+    srv->acceptors = NULL;
   }
 
   if (srv->route_trie) {
@@ -894,7 +924,7 @@ void cerver_shutdown(cerver_server_t* srv) {
   }
 
   cq_destroy(&g_conn_queue);
-  pthread_mutex_destroy(&srv->stat_cache.lock);
+  cerver_mutex_destroy(&srv->stat_cache.lock);
 
 #if CERVER_PLATFORM_WINDOWS
   cerver_wsa_cleanup();

@@ -13,7 +13,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <pthread.h>
 
 /* ------------------------------------------------------------------ */
 /*  Limits                                                            */
@@ -36,9 +35,9 @@
 #define CERVER_MAX_EVENTS     256
 #define CERVER_LISTEN_BACKLOG 4096
 
-/* Worker architecture */
-#define CERVER_THREAD_POOL_DEFAULT 4
-#define CERVER_TASK_QUEUE_SIZE     1024
+/* Connection worker architecture */
+#define CERVER_CONNECTION_WORKER_DEFAULT 4
+#define CERVER_TASK_QUEUE_SIZE           1024
 
 /* Stat cache for filesystem serving */
 #define CERVER_STAT_CACHE_SIZE 256
@@ -180,7 +179,7 @@ typedef struct {
 
 typedef struct {
   cerver_stat_entry_t entries[CERVER_STAT_CACHE_SIZE];
-  pthread_mutex_t     lock;
+  cerver_mutex_t      lock;
 } cerver_stat_cache_t;
 
 /* ------------------------------------------------------------------ */
@@ -190,18 +189,18 @@ typedef struct {
 typedef cerver_handler_fn (*cerver_dispatch_fn)(cerver_request_t* req);
 
 /* ------------------------------------------------------------------ */
-/*  Worker state (per-core event loop)                                */
+/*  Acceptor state (per-core event loop)                              */
 /* ------------------------------------------------------------------ */
 
 typedef struct cerver_server cerver_server_t;
 
 typedef struct {
-  int              id;
-  int              event_fd;  /* kqueue or epoll fd */
-  int              listen_fd; /* per-worker on Linux, shared on macOS */
-  cerver_server_t* srv;
-  pthread_t        thread;
-} cerver_worker_t;
+  int                      id;
+  int                      event_fd;  /* kqueue or epoll fd */
+  cerver_sock_t            listen_fd; /* per-acceptor on Linux, shared on macOS */
+  cerver_server_t*         srv;
+  cerver_acceptor_thread_t thread;
+} cerver_acceptor_t;
 
 /* ------------------------------------------------------------------ */
 /*  Server                                                            */
@@ -209,7 +208,7 @@ typedef struct {
 
 struct cerver_server {
   int             port;
-  int             sock_fd;
+  cerver_sock_t   sock_fd;
   cerver_route_t* routes;
   int             route_count;
   cerver_asset_t* assets;
@@ -223,10 +222,10 @@ struct cerver_server {
   /* Stat cache for filesystem serving */
   cerver_stat_cache_t stat_cache;
 
-  /* Worker pool */
-  int              worker_count;   /* configured connection worker count */
-  int              acceptor_count; /* actual acceptor thread count */
-  cerver_worker_t* workers;
+  /* Connection worker pool */
+  int                connection_worker_count; /* configured connection worker count */
+  int                acceptor_count;          /* actual acceptor thread count */
+  cerver_acceptor_t* acceptors;
 
   /* Route trie for radix/trie-based routing */
   void* route_trie;

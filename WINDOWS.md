@@ -1,7 +1,7 @@
 # Cerver on Windows
 
-Cerver compiles your routes to native C and links against pthreads and (optionally) libcurl.
-On Windows you need a C toolchain that provides these.  Two easy options:
+Cerver compiles your routes to native C and links against Winsock2 and (optionally) libcurl.
+On Windows you need a C toolchain that can build a console executable. Two easy options:
 
 ---
 
@@ -13,7 +13,7 @@ On Windows you need a C toolchain that provides these.  Two easy options:
 
    ```bash
    # MinGW-w64 (recommended for standalone .exe)
-   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-pthreads
+   pacman -S mingw-w64-x86_64-gcc
 
    # If you want fetch() support (outbound HTTP):
    pacman -S mingw-w64-x86_64-curl
@@ -28,17 +28,11 @@ On Windows you need a C toolchain that provides these.  Two easy options:
 
 ---
 
-## Option B — LLVM/Clang for Windows + pthreads4w
+## Option B — LLVM/Clang for Windows
 
 1. Install Clang from https://releases.llvm.org/ (choose the Windows installer).
 
-2. Download and install **pthreads4w** from https://sourceforge.net/projects/pthreads4w/
-   (or clone + build from https://github.com/jwinarske/pthreads4w).
-
-3. Place the pthreads4w headers and `.a` / `.lib` somewhere on your PATH / in a standard
-   location (e.g. `C:\pthreads4w`).  Cerver's compiler probe will find them automatically.
-
-4. If you want `fetch()` support, install libcurl for Windows from https://curl.se/windows/
+2. If you want `fetch()` support, install libcurl for Windows from https://curl.se/windows/
    and add it to PATH / link path.
 
 ---
@@ -61,7 +55,7 @@ The `build` command produces `dist\server.exe`.  The `run` command executes it d
 | Symptom | Fix |
 |---|---|
 | `no C compiler found` | Add `gcc` or `clang` to `PATH`; see Option A/B above |
-| `undefined reference to pthread_*` | Install pthreads-win32 (MSYS2: `pacman -S mingw-w64-x86_64-pthreads`) |
+| thread runtime compiler errors | Make sure you are using the bundled runtime headers from the same Cerver version |
 | `undefined reference to curl_*` | Install libcurl and ensure `libcurl.a` / `libcurl.dll.a` are findable |
 | `WSAStartup failed` | Should not happen; report a bug |
 | `cerver build` passes but binary crashes | Run from the project root, not from `dist\` |

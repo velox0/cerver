@@ -10,10 +10,25 @@
 
 #include "cerver.h"
 
-#include <curl/curl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
+
+#if defined(CERVER_NO_CURL)
+char* cerver_fetch(const char* url, const char* method, const char* body, const char** headers) {
+  (void)url;
+  (void)method;
+  (void)body;
+  (void)headers;
+
+  char* empty = malloc(1);
+  if (empty) empty[0] = '\0';
+  return empty;
+}
+
+#else
+
+#include <curl/curl.h>
 
 /* ------------------------------------------------------------------ */
 /*  Internal write callback for curl                                  */
@@ -50,9 +65,10 @@ static size_t fetch_write_cb(void* contents, size_t size, size_t nmemb, void* us
 /*  Global curl init (thread-safe, called once)                       */
 /* ------------------------------------------------------------------ */
 
-static pthread_once_t curl_init_once = PTHREAD_ONCE_INIT;
+static cerver_fetch_global_init_guard_t curl_global_init_guard =
+    CERVER_FETCH_GLOBAL_INIT_GUARD_INITIALIZER;
 
-static void curl_global_init_once(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
+static void init_curl_global_state(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
@@ -77,7 +93,7 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
   }
 
   /* Ensure global curl init */
-  pthread_once(&curl_init_once, curl_global_init_once);
+  cerver_fetch_global_init_guard_run(&curl_global_init_guard, init_curl_global_state);
 
   CURL* curl = curl_easy_init();
   if (!curl) {
@@ -156,3 +172,4 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
 
   return buf.data;
 }
+#endif  // CERVER_NO_CURL
