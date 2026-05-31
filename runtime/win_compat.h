@@ -30,7 +30,7 @@
    can stay unchanged.  Only the primitives actually used by cerver are
    mapped; this is NOT a general replacement.                          */
 
-#include <pthread.h> /* pthreads4w / pthreads-win32, installed via mingw */
+#include <pthread.h>
 
 /* ---- POSIX socket aliases --------------------------------------- */
 typedef SOCKET cerver_sock_t;
@@ -136,9 +136,9 @@ static inline void cerver_wsa_cleanup(void) { WSACleanup(); }
 
 #else /* !Windows */
 
-#include <stddef.h>    /* size_t */
-#include <sys/types.h> /* ssize_t */
-#include <unistd.h>    /* read, write, close */
+#include <stddef.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #define CERVER_PLATFORM_WINDOWS 0
 typedef int           cerver_sock_t;
