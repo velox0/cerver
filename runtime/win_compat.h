@@ -22,6 +22,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <io.h>
+#include <fcntl.h>    /* _O_RDONLY, _O_BINARY */
 #include <process.h>
 #include <time.h>
 
@@ -77,17 +78,25 @@ static inline void* cerver_memmem_win(const void* hay, size_t hlen, const void* 
 #define memmem cerver_memmem_win
 #endif  // memmem
 
-/* clock_gettime is missing before MSVC 2019 / older MinGW */
-#if defined(_MSC_VER) && _MSC_VER < 1900
-#include <windows.h>
+/* clock_gettime / CLOCK_REALTIME shim.
+ *
+ * Missing on:
+ *   - MSVC before VS 2015 (_MSC_VER < 1900)
+ *   - MinGW-w32 / older MinGW-w64 (no _MSC_VER, but CLOCK_REALTIME absent)
+ *
+ * We test for CLOCK_REALTIME *after* including <time.h> so that
+ * toolchains which do provide it are not accidentally overridden.    */
 #ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME 0
 typedef struct {
   long tv_sec;
   long tv_nsec;
-} timespec_t;
-#define timespec timespec_t
-static inline int clock_gettime(int, struct timespec* ts) {
+} cerver_timespec_t;
+#ifndef timespec
+#define timespec cerver_timespec_t
+#endif  // timespec
+static inline int clock_gettime(int clk_id, struct timespec* ts) {
+  (void)clk_id;
   FILETIME ft;
   GetSystemTimeAsFileTime(&ft);
   ULONGLONG t = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
@@ -97,7 +106,6 @@ static inline int clock_gettime(int, struct timespec* ts) {
   return 0;
 }
 #endif  // CLOCK_REALTIME
-#endif  // _MSC_VER && _MSC_VER < 1900
 
 /* Windows socket error → errno translation for the few codes we check */
 static inline int cerver_would_block_win(void) {
