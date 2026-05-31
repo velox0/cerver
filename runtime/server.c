@@ -396,11 +396,11 @@ static cerver_sock_t create_listener(int port, int reuseport) {
   int opt = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, CERVER_SETSOCKOPT_CAST & opt, sizeof(opt));
 
-#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+#if defined(SO_REUSEPORT)
   if (reuseport) setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #else
   (void)reuseport;
-#endif  // __linux__ || __APPLE__ || __FreeBSD__
+#endif  // SO_REUSEPORT
 
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
@@ -430,11 +430,16 @@ static cerver_sock_t create_listener(int port, int reuseport) {
 static cerver_sock_t accept_connection(cerver_sock_t listen_fd) {
   struct sockaddr_in ca;
   socklen_t          cl = sizeof(ca);
-#if defined(__linux__)
-  return accept4(listen_fd, (struct sockaddr*)&ca, &cl, SOCK_CLOEXEC);
-#else
-  return accept(listen_fd, (struct sockaddr*)&ca, &cl);
-#endif  // __linux__
+  cerver_sock_t      fd = accept(listen_fd, (struct sockaddr*)&ca, &cl);
+#if !CERVER_PLATFORM_WINDOWS
+#if defined(FD_CLOEXEC)
+  if (fd >= 0) {
+    int flags = fcntl(fd, F_GETFD, 0);
+    if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+  }
+#endif  // FD_CLOEXEC
+#endif  // !CERVER_PLATFORM_WINDOWS
+  return fd;
 }
 
 /* ------------------------------------------------------------------ */

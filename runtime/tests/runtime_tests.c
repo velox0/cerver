@@ -17,26 +17,30 @@
 #ifndef PATH_MAX
 #define PATH_MAX _MAX_PATH
 #endif  // PATH_MAX
-#define cerver_test_open  _open
-#define cerver_test_close _close
-#define cerver_test_read  _read
-#define cerver_test_write _write
-#define cerver_test_pipe(fds) _pipe((fds), 4096, _O_BINARY)
-#define cerver_test_unlink _unlink
-#define cerver_test_rmdir  _rmdir
+#define cerver_test_open              _open
+#define cerver_test_close             _close
+#define cerver_test_read              _read
+#define cerver_test_write             _write
+#define cerver_test_pipe(fds)         _pipe((fds), 4096, _O_BINARY)
+#define cerver_test_unlink            _unlink
+#define cerver_test_rmdir             _rmdir
 #define cerver_test_mkdir(path, mode) _mkdir(path)
 #else
 #include <sys/mman.h>
 #include <unistd.h>
-#define cerver_test_open  open
-#define cerver_test_close close
-#define cerver_test_read  read
-#define cerver_test_write write
-#define cerver_test_pipe(fds) pipe((fds))
-#define cerver_test_unlink unlink
-#define cerver_test_rmdir  rmdir
+#define cerver_test_open              open
+#define cerver_test_close             close
+#define cerver_test_read              read
+#define cerver_test_write             write
+#define cerver_test_pipe(fds)         pipe((fds))
+#define cerver_test_unlink            unlink
+#define cerver_test_rmdir             rmdir
 #define cerver_test_mkdir(path, mode) mkdir((path), (mode))
 #endif  // CERVER_PLATFORM_WINDOWS
+
+#if !CERVER_PLATFORM_WINDOWS
+char* mkdtemp(char* tmpl);
+#endif  // !CERVER_PLATFORM_WINDOWS
 
 static char* cerver_test_mkdtemp(char* tmpl) {
 #if CERVER_PLATFORM_WINDOWS
