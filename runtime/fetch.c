@@ -10,10 +10,25 @@
 
 #include "cerver.h"
 
-#include <curl/curl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
+
+#if defined(CERVER_NO_CURL)
+char* cerver_fetch(const char* url, const char* method, const char* body, const char** headers) {
+  (void)url;
+  (void)method;
+  (void)body;
+  (void)headers;
+
+  char* empty = malloc(1);
+  if (empty) empty[0] = '\0';
+  return empty;
+}
+
+#else
+
+#include <curl/curl.h>
 
 /* ------------------------------------------------------------------ */
 /*  Internal write callback for curl                                  */
@@ -157,3 +172,4 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
 
   return buf.data;
 }
+#endif  // CERVER_NO_CURL
