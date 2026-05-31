@@ -16,7 +16,7 @@
 #if !CERVER_PLATFORM_WINDOWS
 #include <unistd.h>
 #include <sys/uio.h>
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
 /* ------------------------------------------------------------------ */
 /*  sendfile — read-write fallback everywhere                         */
@@ -64,7 +64,7 @@ static ssize_t do_sendfile(cerver_sock_t out_fd, int in_fd, off_t offset, size_t
   if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
   size_t  to_read = count > sizeof(buf) ? sizeof(buf) : count;
   ssize_t n_read  = read(in_fd, buf, to_read);
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
   if (n_read <= 0) return (ssize_t)n_read;
   size_t written = 0;
   while (written < (size_t)n_read) {
@@ -74,7 +74,8 @@ static ssize_t do_sendfile(cerver_sock_t out_fd, int in_fd, off_t offset, size_t
   }
   return (ssize_t)written;
 }
-#endif
+#endif  // __linux__ && !CERVER_PLATFORM_WINDOWS
+        // !CERVER_PLATFORM_WINDOWS, else
 
 /* ------------------------------------------------------------------ */
 /*  Portable full-write helper (send all bytes)                       */
@@ -87,7 +88,7 @@ static int send_all(cerver_sock_t fd, const char* buf, size_t len) {
     if (n < 0) {
 #if !CERVER_PLATFORM_WINDOWS
       if (errno == EINTR) continue;
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
       return -1;
     }
     sent += (size_t)n;
@@ -167,7 +168,7 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
       if (n < 0) {
 #if !CERVER_PLATFORM_WINDOWS
         if (errno == EINTR) continue;
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
         return -1;
       }
       if (n == 0) break;

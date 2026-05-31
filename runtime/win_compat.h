@@ -14,10 +14,10 @@
 /* ---- winsock / windows ------------------------------------------ */
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#endif
+#endif  // WIN32_LEAN_AND_MEAN
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0601 /* Windows 7+ */
-#endif
+#endif                      // _WIN32_WINNT
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -41,7 +41,7 @@ typedef SOCKET cerver_sock_t;
 #if !defined(ssize_t) && !defined(_SSIZE_T_DEFINED)
 typedef intptr_t ssize_t;
 #define _SSIZE_T_DEFINED
-#endif
+#endif  // !ssize_t && !_SSIZE_T_DEFINED
 
 /* read/write on a socket must go through recv/send on Windows */
 static inline ssize_t cerver_sock_read(int fd, void* buf, size_t n) {
@@ -75,7 +75,7 @@ static inline void* cerver_memmem_win(const void* hay, size_t hlen, const void* 
 }
 #ifndef memmem
 #define memmem cerver_memmem_win
-#endif
+#endif  // memmem
 
 /* clock_gettime is missing before MSVC 2019 / older MinGW */
 #if defined(_MSC_VER) && _MSC_VER < 1900
@@ -96,8 +96,8 @@ static inline int clock_gettime(int, struct timespec* ts) {
   ts->tv_nsec = (long)((t % 10000000ULL) * 100);
   return 0;
 }
-#endif
-#endif
+#endif  // CLOCK_REALTIME
+#endif  // _MSC_VER && _MSC_VER < 1900
 
 /* Windows socket error → errno translation for the few codes we check */
 static inline int cerver_would_block_win(void) {
@@ -116,12 +116,12 @@ static inline long cerver_nproc_win(void) {
 /* sleep(n) → Sleep(n*1000) */
 #ifndef sleep
 #define sleep(n) Sleep((DWORD)((n) * 1000))
-#endif
+#endif  // sleep
 
 /* Signal shim — Windows has signal() but not SIGPIPE */
 #ifndef SIGPIPE
 #define SIGPIPE 13
-#endif
+#endif  // SIGPIPE
 /* SIG_IGN is defined in <signal.h> on Windows */
 
 /* Winsock init/teardown helpers ----------------------------------- */
@@ -153,5 +153,5 @@ static inline ssize_t cerver_sock_write(int fd, const void* buf, size_t n) {
 static inline int  cerver_wsa_startup(void) { return 0; }
 static inline void cerver_wsa_cleanup(void) {}
 
-#endif /* _WIN32 */
-#endif /* CERVER_WIN_COMPAT_H */
+#endif  // _WIN32 || _WIN64
+#endif  // CERVER_WIN_COMPAT_H

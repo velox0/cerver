@@ -19,11 +19,11 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
 #ifdef __linux__
 #include <sys/sendfile.h>
-#endif
+#endif  // __linux__
 
 /* ------------------------------------------------------------------ */
 /*  FNV-1a hash for fast asset lookup                                 */
@@ -257,7 +257,7 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
   int fd = _open(full_path, _O_RDONLY | _O_BINARY);
 #else
   int fd = open(full_path, O_RDONLY);
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
   if (fd < 0) return -1;
 
   res->status       = 200;

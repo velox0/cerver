@@ -61,4 +61,4 @@ const char* mu_snip(const char* s, char* buf, size_t cap);
     }                                                                               \
   } while (0)
 
-#endif
+#endif  // CERVER_MINUNIT_H

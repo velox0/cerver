@@ -304,4 +304,4 @@ int  cerver_stat_cache_lookup(cerver_stat_cache_t* cache, const char* path, size
 void cerver_stat_cache_store(cerver_stat_cache_t* cache, const char* path, size_t file_size,
                              time_t mtime);
 
-#endif /* CERVER_H */
+#endif  // CERVER_H

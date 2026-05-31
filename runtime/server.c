@@ -34,7 +34,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
 #define CERVER_USE_KQUEUE 1
@@ -49,11 +49,12 @@
 #else
 #define CERVER_USE_SELECT 1
 #include <sys/select.h>
-#endif
+#endif  // __APPLE__ || __FreeBSD__
+        // CERVER_PLATFORM_WINDOWS, else
 
 #ifdef __linux__
 #include <sched.h>
-#endif
+#endif  // __linux__
 
 /* Connection pool sizing */
 #define CERVER_CONN_POOL_SIZE  128
@@ -74,7 +75,7 @@ static void* cerver_memmem(const void* hay, size_t haylen, const void* needle, s
   return NULL;
 }
 #define memmem cerver_memmem
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS && !__APPLE__ && !_GNU_SOURCE
 
 /* Global for signal handler */
 static cerver_server_t* g_srv = NULL;
@@ -95,7 +96,7 @@ static int set_nonblocking(cerver_sock_t fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags < 0) return -1;
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 }
 
 static int get_cpu_count(void) {
@@ -103,7 +104,7 @@ static int get_cpu_count(void) {
   long n = cerver_nproc_win();
 #else
   long n = sysconf(_SC_NPROCESSORS_ONLN);
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
   if (n < 1) n = 1;
   if (n > 64) n = 64;
   return (int)n;
@@ -209,11 +210,6 @@ static char* read_full_request(cerver_sock_t fd, size_t* out_len) {
   char*  buf = malloc(cap + 1);
   if (!buf) return NULL;
 
-#if CERVER_PLATFORM_WINDOWS
-  /* On Windows set a blocking recv timeout via SO_RCVTIMEO (already set
-     per-connection in handle_connection).  Just read normally. */
-#endif
-
   while (len < (size_t)CERVER_READ_BUF_MAX) {
     ssize_t n = (ssize_t)cerver_sock_read(fd, buf + len, cap - len);
     if (n <= 0) break;
@@ -252,7 +248,7 @@ static void handle_connection(cerver_server_t* srv, cerver_sock_t client_fd) {
     int flags = fcntl(client_fd, F_GETFL, 0);
     if (flags >= 0 && (flags & O_NONBLOCK)) fcntl(client_fd, F_SETFL, flags & ~O_NONBLOCK);
   }
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
   /* TCP_NODELAY */
   {
@@ -272,7 +268,7 @@ static void handle_connection(cerver_server_t* srv, cerver_sock_t client_fd) {
 #else
     struct timeval tv = {timeout_sec, 0};
     setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, CERVER_SETSOCKOPT_CAST & tv, sizeof(tv));
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 
     size_t req_len = 0;
     char*  buf     = read_full_request(client_fd, &req_len);
@@ -300,7 +296,7 @@ static void handle_connection(cerver_server_t* srv, cerver_sock_t client_fd) {
     memset(&res, 0, sizeof(res));
 #if !CERVER_PLATFORM_WINDOWS
     res._file_fd = -1;
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
     if (cerver_serve_static(srv, &req, &res) < 0) {
       cerver_handler_fn handler = cerver_dispatch(srv, &req);
@@ -321,7 +317,7 @@ static void handle_connection(cerver_server_t* srv, cerver_sock_t client_fd) {
       munmap((void*)res.body, res.body_len);
     else if (res._body_owned == 3 && res._file_fd >= 0)
       close(res._file_fd);
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
     free(buf);
     if (write_err < 0) break;
@@ -391,7 +387,7 @@ static cerver_sock_t create_listener(int port, int reuseport) {
     perror("cerver: socket");
     return CERVER_INVALID_SOCK;
   }
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 
   int opt = 1;
   setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, CERVER_SETSOCKOPT_CAST & opt, sizeof(opt));
@@ -400,7 +396,7 @@ static cerver_sock_t create_listener(int port, int reuseport) {
   if (reuseport) setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
 #else
   (void)reuseport;
-#endif
+#endif  // __linux__ || __APPLE__ || __FreeBSD__
 
   struct sockaddr_in addr;
   memset(&addr, 0, sizeof(addr));
@@ -434,7 +430,7 @@ static cerver_sock_t accept_connection(cerver_sock_t listen_fd) {
   return accept4(listen_fd, (struct sockaddr*)&ca, &cl, SOCK_CLOEXEC);
 #else
   return accept(listen_fd, (struct sockaddr*)&ca, &cl);
-#endif
+#endif  // __linux__
 }
 
 /* ------------------------------------------------------------------ */
@@ -553,7 +549,7 @@ static void* acceptor_loop(void* arg) {
   return NULL;
 }
 
-#else /* SELECT — used on Windows and other POSIX platforms */
+#else
 
 static void* acceptor_loop(void* arg) {
   cerver_worker_t* w   = (cerver_worker_t*)arg;
@@ -578,13 +574,13 @@ static void* acceptor_loop(void* arg) {
 #else
     struct timeval tv  = {1, 0};
     int            ret = select((int)w->listen_fd + 1, &rfds, NULL, NULL, &tv);
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
     if (ret < 0) {
 #if CERVER_PLATFORM_WINDOWS
       if (WSAGetLastError() == WSAEINTR) continue;
 #else
       if (errno == EINTR) continue;
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
       break;
     }
     if (ret > 0 && FD_ISSET(w->listen_fd, &rfds)) {
@@ -595,7 +591,7 @@ static void* acceptor_loop(void* arg) {
           if (cerver_would_block_win()) break;
 #else
           if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
           break;
         }
         if (cq_push(&g_conn_queue, cfd) < 0) {
@@ -606,7 +602,7 @@ static void* acceptor_loop(void* arg) {
   }
   return NULL;
 }
-#endif /* acceptor backends */
+#endif  // CERVER_USE_KQUEUE
 
 /* ------------------------------------------------------------------ */
 /*  Stat cache                                                        */
@@ -676,7 +672,7 @@ int cerver_init(cerver_server_t* srv, int port, int threads) {
   cerver_stat_cache_init(&srv->stat_cache);
 #if CERVER_PLATFORM_WINDOWS
   cerver_wsa_startup();
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
   return 0;
 }
 
@@ -709,7 +705,7 @@ int cerver_listen(cerver_server_t* srv) {
   signal(SIGTERM, signal_handler);
 #if !CERVER_PLATFORM_WINDOWS
   signal(SIGPIPE, SIG_IGN);
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
 
   srv->running        = 1;
   srv->acceptor_count = 0;
@@ -723,7 +719,7 @@ int cerver_listen(cerver_server_t* srv) {
   /* Windows select-based acceptor: limit to 1 until IOCP is wired */
 #if CERVER_PLATFORM_WINDOWS
   acceptor_count = 1;
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 
   int pool_size = configured_worker_count * 16;
   if (pool_size < CERVER_CONN_POOL_SIZE) pool_size = CERVER_CONN_POOL_SIZE;
@@ -802,7 +798,7 @@ int cerver_listen(cerver_server_t* srv) {
     if (w->listen_fd == CERVER_INVALID_SOCK) w->listen_fd = srv->sock_fd;
 #else
     w->listen_fd = srv->sock_fd;
-#endif
+#endif  // __linux__ || __APPLE__ || __FreeBSD__
     if (pthread_create(&w->thread, &attr, acceptor_loop, w) != 0) {
       perror("cerver: acceptor create");
       srv->running = 0;
@@ -875,13 +871,13 @@ void cerver_shutdown(cerver_server_t* srv) {
       if (srv->workers[i].listen_fd != srv->sock_fd &&
           srv->workers[i].listen_fd != CERVER_INVALID_SOCK)
         cerver_platform_close(srv->workers[i].listen_fd);
-#endif
+#endif  // __linux__ || __APPLE__ || __FreeBSD__
       if (srv->workers[i].event_fd >= 0)
 #if !CERVER_PLATFORM_WINDOWS
         close(srv->workers[i].event_fd);
 #else
         closesocket((SOCKET)srv->workers[i].event_fd);
-#endif
+#endif  // !CERVER_PLATFORM_WINDOWS
     }
     free(srv->workers);
     srv->workers = NULL;
@@ -902,7 +898,7 @@ void cerver_shutdown(cerver_server_t* srv) {
 
 #if CERVER_PLATFORM_WINDOWS
   cerver_wsa_cleanup();
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 
   printf("\ncerver: server stopped\n");
 }
