@@ -10,8 +10,6 @@ A lightweight, compile-time web framework that transpiles restricted JavaScript 
 
 Cerver takes a Next.js-style file-based routing structure (written in a strict subset of JavaScript), parses it, generates equivalent C code, embeds your static assets, and compiles it all into a single, standalone executable that runs with zero Node.js dependency.
 
-In other words: you write straightforward JS handlers, Cerver turns them into a native HTTP server at build time, and the runtime ships as a single binary.
-
 ## Features
 
 - **Compile-Time Framework**: Your JavaScript is parsed and compiled to native C. There is no JavaScript engine (like V8) or interpreter included in the final binary.
@@ -19,23 +17,6 @@ In other words: you write straightforward JS handlers, Cerver turns them into a 
 - **Single-Binary Deployment**: Static assets (HTML, CSS, JS, images) are automatically minified and embedded directly into the executable as C byte arrays.
 - **Native Performance**: Uses `kqueue` (macOS) or `epoll` (Linux) event loops for high-performance non-blocking I/O.
 - **File-Based Routing**: Intuitive `routes/` directory structure, supporting dynamic segments (e.g., `/item/[id].js`).
-
-## Pipeline (JS -> AST -> IR -> Binary)
-
-This is a compile-time system, not a server-side JS runtime. The build step does all of the heavy lifting:
-
-```
-routes/*.js
-  -> parse with Acorn
-  -> AST
-  -> validate (restricted JS)
-  -> IR (stable, compiler-friendly)
-  -> codegen (C)
-  -> compile + runtime + assets
-  -> single native binary
-```
-
-The result is a binary that starts fast, avoids a JS engine entirely, and includes your static assets in the executable itself.
 
 ## Benchmarks (Autocannon)
 
@@ -188,45 +169,14 @@ export default {
   embed: true, // Embed assets from public/ into the binary
   minify: true, // Minify HTML/CSS/JS before embedding
   compression: "none", // Future: pre-compress assets
-  // Optional: compiler customization and cross-target settings
-  compile: {
-    // cc: "clang", // or "x86_64-linux-gnu-gcc"
-    // output: "dist/server", // output binary path (relative to project root)
-    // target: "x86_64-linux-gnu", // full target triple (preferred)
-    // targetOs: "linux", // or "darwin" (used with targetArch if target omitted)
-    // targetArch: "x86_64", // or "arm64"
-    // sysroot: "/path/to/sysroot",
-    // cflags: "-O2 -g",
-    // ldflags: "-static",
-    // lto: true,
-    // marchNative: false,
-    // compileInfo: false,
-  },
 };
 ```
-
-### Cross-Compilation
-
-Pass target details via CLI or `cerver.config.js`. If `target` is set, it is used as-is. If only `targetOs` + `targetArch` are set, Cerver will build a simple `arch-os` target string.
-
-```bash
-# Use a full target triple
-cerver build --target x86_64-linux-gnu --cc x86_64-linux-gnu-gcc
-
-# Or split OS/arch
-cerver build --target-os linux --target-arch arm64
-
-# Custom output location
-cerver build --output dist/cerver-linux
-```
-
-Note: when a target is specified, `-march=native` is disabled by default (set `compile.marchNative: true` to force it). Cross-compiling requires an appropriate toolchain and sysroot for the target.
 
 ## How It Works
 
 1. **Parser**: Uses Acorn to parse your JS route files into ASTs.
 2. **Validator**: Scans the AST to ensure no unsupported JS features are used.
-3. **IR**: Transforms the AST into a compiler-friendly Intermediate Representation.
-4. **Generator**: Emits optimized C for routing, handlers, and response helpers.
-5. **Asset Pipeline**: Scans `public/`, optionally minifies, and converts files into C byte arrays.
-6. **Compiler**: Invokes `gcc` or `clang` to build the generated C plus the runtime into a single binary.
+3. **IR**: Transforms the AST into an Intermediate Representation.
+4. **Generator**: Emits optimized C code mapping directly to your JS logic.
+5. **Asset Pipeline**: Scans the `public/` folder, minifies files, and converts them to C byte arrays.
+6. **Compiler**: Invokes `gcc` or `clang` to compile the generated code and the Cerver runtime into a native binary.

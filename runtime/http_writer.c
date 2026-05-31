@@ -1,78 +1,102 @@
 /*
  * http_writer.c — HTTP/1.1 response writer.
  *
- * Uses writev() for zero-copy header+body writes.
- * Supports keep-alive and Connection: close signaling.
+ * Cross-platform: writev on POSIX, manual loop on Windows.
+ * sendfile falls back to read-write copy on non-Linux/macOS.
  */
 
+#include "win_compat.h"
 #include "cerver.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <sys/uio.h>
 #include <errno.h>
 
-#ifdef __linux__
+#if !CERVER_PLATFORM_WINDOWS
+#include <unistd.h>
+#include <sys/uio.h>
+#endif
+
+/* ------------------------------------------------------------------ */
+/*  sendfile — read-write fallback everywhere                         */
+/* ------------------------------------------------------------------ */
+
+#if defined(__linux__) && !CERVER_PLATFORM_WINDOWS
 #include <sys/sendfile.h>
-static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
+static ssize_t do_sendfile(cerver_sock_t out_fd, int in_fd, off_t offset, size_t count) {
   off_t off = offset;
   return sendfile(out_fd, in_fd, &off, count);
 }
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) && !CERVER_PLATFORM_WINDOWS
 #include <sys/types.h>
 #include <sys/socket.h>
-static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
+static ssize_t do_sendfile(cerver_sock_t out_fd, int in_fd, off_t offset, size_t count) {
   off_t len = (off_t)count;
   int   res = sendfile(in_fd, out_fd, offset, &len, NULL, 0);
-  if (res == 0) {
-    return (ssize_t)len;
-  }
-  if (len > 0) {
-    return (ssize_t)len;
-  }
-  /* Fallback to read-write copy if not a socket or unsupported on this descriptor type */
+  if (res == 0 || len > 0) return (ssize_t)len;
+  /* fallthrough to read-write */
   char buf[8192];
   if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
   size_t  to_read = count > sizeof(buf) ? sizeof(buf) : count;
   ssize_t n_read  = read(in_fd, buf, to_read);
   if (n_read <= 0) return n_read;
-
   size_t written = 0;
   while (written < (size_t)n_read) {
-    ssize_t n_write = write(out_fd, buf + written, (size_t)n_read - written);
-    if (n_write < 0) {
+    ssize_t n = write(out_fd, buf + written, (size_t)n_read - written);
+    if (n < 0) {
       if (errno == EINTR) continue;
       return -1;
     }
-    written += (size_t)n_write;
+    written += (size_t)n;
   }
   return (ssize_t)written;
 }
 #else
-static ssize_t cerver_sendfile(int out_fd, int in_fd, off_t offset, size_t count) {
+/* Windows or other: read from file, send via socket API */
+static ssize_t do_sendfile(cerver_sock_t out_fd, int in_fd, off_t offset, size_t count) {
   char buf[8192];
+#if CERVER_PLATFORM_WINDOWS
+  if (_lseeki64(in_fd, offset, SEEK_SET) == -1) return -1;
+  int to_read = (int)(count > sizeof(buf) ? sizeof(buf) : count);
+  int n_read  = _read(in_fd, buf, to_read);
+#else
   if (lseek(in_fd, offset, SEEK_SET) == -1) return -1;
   size_t  to_read = count > sizeof(buf) ? sizeof(buf) : count;
   ssize_t n_read  = read(in_fd, buf, to_read);
-  if (n_read <= 0) return n_read;
-
+#endif
+  if (n_read <= 0) return (ssize_t)n_read;
   size_t written = 0;
   while (written < (size_t)n_read) {
-    ssize_t n_write = write(out_fd, buf + written, (size_t)n_read - written);
-    if (n_write < 0) {
-      if (errno == EINTR) continue;
-      return -1;
-    }
-    written += (size_t)n_write;
+    ssize_t n = cerver_sock_write(out_fd, buf + written, (size_t)n_read - written);
+    if (n < 0) return -1;
+    written += (size_t)n;
   }
   return (ssize_t)written;
 }
 #endif
 
 /* ------------------------------------------------------------------ */
-/*  Status text lookup                                                */
+/*  Portable full-write helper (send all bytes)                       */
+/* ------------------------------------------------------------------ */
+
+static int send_all(cerver_sock_t fd, const char* buf, size_t len) {
+  size_t sent = 0;
+  while (sent < len) {
+    ssize_t n = cerver_sock_write(fd, buf + sent, len - sent);
+    if (n < 0) {
+#if !CERVER_PLATFORM_WINDOWS
+      if (errno == EINTR) continue;
+#endif
+      return -1;
+    }
+    sent += (size_t)n;
+  }
+  return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Status text                                                       */
 /* ------------------------------------------------------------------ */
 
 static const char* status_text(int code) {
@@ -109,138 +133,65 @@ static const char* status_text(int code) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Write the full response to fd using writev                        */
+/*  Write the full response                                           */
 /* ------------------------------------------------------------------ */
 
 int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
-  /* Build the response header */
+  cerver_sock_t sfd = (cerver_sock_t)fd;
+
   char header[4096];
   int  hlen = 0;
 
-  /* Status line */
   hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "HTTP/1.1 %d %s\r\n", res->status,
                    status_text(res->status));
-
-  /* Content-Type */
-  if (res->content_type) {
+  if (res->content_type)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Type: %s\r\n",
                      res->content_type);
-  }
-
-  /* Content-Length */
   hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Length: %zu\r\n",
                    res->body_len);
-
-  /* Extra headers */
-  for (int i = 0; i < res->header_count; i++) {
+  for (int i = 0; i < res->header_count; i++)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "%s: %s\r\n",
                      res->headers[i].key, res->headers[i].value);
-  }
-
-  /* Connection header — honor keep-alive state */
-  if (keepalive && !res->_force_close) {
+  if (keepalive && !res->_force_close)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Connection: keep-alive\r\n");
-  } else {
+  else
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Connection: close\r\n");
-  }
+  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Server: cerver\r\n\r\n");
 
-  /* Server header */
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Server: cerver\r\n");
-
-  /* End of headers */
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "\r\n");
-
-  /*
-   * Use writev() or sendfile() to send response, or copy to contiguous
-   * buffer if body is small to avoid writev round-trips.
-   */
   if (res->_body_owned == 3) {
-    /* Send header first */
-    size_t header_total   = (size_t)hlen;
-    size_t header_written = 0;
-    while (header_written < header_total) {
-      ssize_t n = write(fd, header + header_written, header_total - header_written);
+    /* File-descriptor sendfile path */
+    if (send_all(sfd, header, (size_t)hlen) < 0) return -1;
+    size_t total = res->body_len, sent = 0;
+    while (sent < total) {
+      ssize_t n = do_sendfile(sfd, res->_file_fd, (off_t)sent, total - sent);
       if (n < 0) {
+#if !CERVER_PLATFORM_WINDOWS
         if (errno == EINTR) continue;
+#endif
         return -1;
       }
-      header_written += (size_t)n;
-    }
-
-    /* Zero-copy body sending via sendfile(2) */
-    size_t body_total = res->body_len;
-    size_t body_sent  = 0;
-    while (body_sent < body_total) {
-      ssize_t n = cerver_sendfile(fd, res->_file_fd, (off_t)body_sent, body_total - body_sent);
-      if (n < 0) {
-        if (errno == EINTR) continue;
-        return -1;
-      }
-      if (n == 0) break; /* EOF */
-      body_sent += (size_t)n;
+      if (n == 0) break;
+      sent += (size_t)n;
     }
   } else if (res->body && res->body_len > 0) {
     if ((size_t)hlen + res->body_len <= sizeof(header)) {
-      /* Small response optimization: copy body into header buffer and send in one syscall */
+      /* Small response: one syscall */
       memcpy(header + hlen, res->body, res->body_len);
-      size_t total   = (size_t)hlen + res->body_len;
-      size_t written = 0;
-      while (written < total) {
-        ssize_t n = write(fd, header + written, total - written);
-        if (n < 0) {
-          if (errno == EINTR) continue;
-          return -1;
-        }
-        written += (size_t)n;
-      }
+      if (send_all(sfd, header, (size_t)hlen + res->body_len) < 0) return -1;
     } else {
-      /* Large response: use writev to send header + body */
-      struct iovec iov[2];
-      iov[0].iov_base = header;
-      iov[0].iov_len  = (size_t)hlen;
-      iov[1].iov_base = (void*)res->body;
-      iov[1].iov_len  = res->body_len;
-
-      size_t total   = iov[0].iov_len + iov[1].iov_len;
-      size_t written = 0;
-
-      while (written < total) {
-        ssize_t n = writev(fd, iov, 2);
-        if (n < 0) return -1;
-        written += (size_t)n;
-
-        /* Adjust iov for partial writes */
-        size_t to_consume = (size_t)n;
-        if (to_consume < iov[0].iov_len) {
-          iov[0].iov_base = (char*)iov[0].iov_base + to_consume;
-          iov[0].iov_len -= to_consume;
-        } else {
-          to_consume -= iov[0].iov_len;
-          iov[0].iov_len  = 0;
-          iov[1].iov_base = (char*)iov[1].iov_base + to_consume;
-          iov[1].iov_len -= to_consume;
-        }
-      }
+      /* Large response: header then body */
+      if (send_all(sfd, header, (size_t)hlen) < 0) return -1;
+      if (send_all(sfd, res->body, res->body_len) < 0) return -1;
     }
   } else {
-    /* No body — just send header */
-    size_t total   = (size_t)hlen;
-    size_t written = 0;
-    while (written < total) {
-      ssize_t n = write(fd, header + written, total - written);
-      if (n < 0) {
-        if (errno == EINTR) continue;
-        return -1;
-      }
-      written += (size_t)n;
-    }
+    if (send_all(sfd, header, (size_t)hlen) < 0) return -1;
   }
 
   return 0;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Response helper functions                                         */
+/*  Response helpers                                                  */
 /* ------------------------------------------------------------------ */
 
 void cerver_res_text(cerver_response_t* res, int status, const char* text) {
@@ -250,7 +201,6 @@ void cerver_res_text(cerver_response_t* res, int status, const char* text) {
   res->body_len     = strlen(text);
   res->_body_owned  = 0;
 }
-
 void cerver_res_json(cerver_response_t* res, int status, const char* json) {
   res->status       = status;
   res->content_type = "application/json; charset=utf-8";
@@ -258,7 +208,6 @@ void cerver_res_json(cerver_response_t* res, int status, const char* json) {
   res->body_len     = strlen(json);
   res->_body_owned  = 0;
 }
-
 void cerver_res_html(cerver_response_t* res, int status, const char* html) {
   res->status       = status;
   res->content_type = "text/html; charset=utf-8";
@@ -266,7 +215,6 @@ void cerver_res_html(cerver_response_t* res, int status, const char* html) {
   res->body_len     = strlen(html);
   res->_body_owned  = 0;
 }
-
 void cerver_res_file(cerver_response_t* res, int status, const char* mime,
                      const unsigned char* data, size_t len) {
   res->status       = status;
@@ -275,7 +223,6 @@ void cerver_res_file(cerver_response_t* res, int status, const char* mime,
   res->body_len     = len;
   res->_body_owned  = 0;
 }
-
 void cerver_res_header(cerver_response_t* res, const char* key, const char* val) {
   if (res->header_count < CERVER_MAX_HEADERS) {
     res->headers[res->header_count].key   = key;

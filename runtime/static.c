@@ -6,16 +6,20 @@
  * mmap (macOS) with stat caching for zero-copy delivery.
  */
 
+#include "win_compat.h"
 #include "cerver.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <sys/stat.h>
+
+#if !CERVER_PLATFORM_WINDOWS
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/stat.h>
 #include <sys/mman.h>
-#include <time.h>
+#endif
 
 #ifdef __linux__
 #include <sys/sendfile.h>
@@ -249,7 +253,11 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
    * The file is opened and its descriptor is stored in the response structure
    * for streaming directly to the client socket in the writer.
    */
+#if CERVER_PLATFORM_WINDOWS
+  int fd = _open(full_path, _O_RDONLY | _O_BINARY);
+#else
   int fd = open(full_path, O_RDONLY);
+#endif
   if (fd < 0) return -1;
 
   res->status       = 200;

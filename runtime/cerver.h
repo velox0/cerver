@@ -6,15 +6,7 @@
  * the route dispatch interface.
  */
 
-/*
- * Feature test macros for POSIX/GNU APIs used by the runtime.
- * Must be defined before any system headers.
- */
-#if defined(__linux__)
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
-#endif
+#include "win_compat.h"
 
 #ifndef CERVER_H
 #define CERVER_H

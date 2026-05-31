@@ -2,6 +2,7 @@
  * mime.c — MIME type detection by file extension.
  */
 
+#include "win_compat.h"
 #include "cerver.h"
 
 #include <string.h>

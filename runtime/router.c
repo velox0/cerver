@@ -6,6 +6,7 @@
  * Supports dispatch override for compile-time generated dispatch.
  */
 
+#include "win_compat.h"
 #include "cerver.h"
 
 #include <stdio.h>

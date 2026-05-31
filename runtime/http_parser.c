@@ -6,6 +6,7 @@
  * The caller must keep the buffer alive for the lifetime of the request.
  */
 
+#include "win_compat.h"
 #include "cerver.h"
 
 #include <stdio.h>
