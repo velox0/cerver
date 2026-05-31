@@ -1,0 +1,76 @@
+name: Tag release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Configure git
+        run: |
+          git config user.name  "${{ github.actor }}"
+          git config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+
+      - name: Read version from package.json
+        id: version
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check tag does not already exist
+        run: |
+          if git rev-parse "${{ steps.version.outputs.version }}" > /dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.version }} already exists. Bump the version in package.json first."
+            exit 1
+          fi
+
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+
+      - name: Build tag message
+        id: tag_message
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PREV="${{ steps.prev_tag.outputs.tag }}"
+
+          if [ -z "$PREV" ]; then
+            COMMITS=$(git log --pretty=format:"- %s" HEAD)
+          else
+            COMMITS=$(git log --pretty=format:"- %s" "${PREV}..HEAD")
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No commits since last tag ($PREV). Nothing to release."
+            exit 1
+          fi
+
+          {
+            echo "$VERSION"
+            echo ""
+            echo "$COMMITS"
+          } > /tmp/tag_message.txt
+
+          echo "message_file=/tmp/tag_message.txt" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        run: |
+          git tag \
+            --annotate \
+            --file="/tmp/tag_message.txt" \
+            "${{ steps.version.outputs.version }}"
+          git push origin "${{ steps.version.outputs.version }}"
