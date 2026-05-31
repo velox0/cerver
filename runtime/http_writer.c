@@ -13,7 +13,7 @@
 #include <string.h>
 #include <errno.h>
 
-/* Size formatting uses %llu with unsigned long long cast to avoid MinGW warnings */
+/* Size formatting uses %zu with unsigned long long cast to avoid MinGW warnings */
 
 #if !CERVER_PLATFORM_WINDOWS
 #include <unistd.h>
@@ -150,8 +150,8 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
   if (res->content_type)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Type: %s\r\n",
                      res->content_type);
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Length: %llu\r\n",
-                   (unsigned long long)res->body_len);
+  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Length: %zu\r\n",
+                   res->body_len);
   for (int i = 0; i < res->header_count; i++)
     hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "%s: %s\r\n",
                      res->headers[i].key, res->headers[i].value);

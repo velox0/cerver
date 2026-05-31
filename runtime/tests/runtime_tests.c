@@ -1,4 +1,4 @@
-#include "cerver.h"
+#include "../cerver.h"
 #include "minunit.h"
 
 #include <errno.h>
@@ -8,9 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if !CERVER_PLATFORM_WINDOWS
 #include <sys/mman.h>
-#endif
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
@@ -114,7 +112,6 @@ static void test_parse_request_trailing_slash(void) {
   free(buf);
 }
 
-#if !CERVER_PLATFORM_WINDOWS
 static void test_write_response_keepalive(void) {
   int fds[2];
   MU_ASSERT(pipe(fds) == 0);
@@ -158,7 +155,6 @@ static void test_write_response_force_close(void) {
 
   MU_ASSERT(strstr(out, "Connection: close\r\n") != NULL);
 }
-#endif
 
 static void handler_a(cerver_request_t* req, cerver_response_t* res) {
   (void)req;
@@ -316,7 +312,6 @@ static void test_static_embedded_index_fallback(void) {
   MU_ASSERT_STREQ("text/html", res.content_type);
 }
 
-#if !CERVER_PLATFORM_WINDOWS
 static void test_static_filesystem_directory_fallback(void) {
   char  dir_template[] = "/tmp/cerver-test-XXXXXX";
   char* dir            = mkdtemp(dir_template);
@@ -492,7 +487,6 @@ static void test_static_filesystem_large(void) {
   unlink(file_path);
   rmdir(dir);
 }
-#endif
 
 static void test_static_rejects_unsafe_path(void) {
   cerver_server_t srv;
@@ -524,28 +518,24 @@ static void test_cerver_init_fields(void) {
   cerver_init(&srv, 9090, 3);
   MU_ASSERT_EQ_INT(9090, srv.port);
   MU_ASSERT_EQ_INT(3, srv.worker_count);
-  MU_ASSERT(srv.sock_fd == CERVER_INVALID_SOCK);
+  MU_ASSERT_EQ_INT(-1, srv.sock_fd);
   MU_ASSERT_EQ_INT(0, srv.running);
 }
 
 int main(void) {
   mu_run("parse_request_basic", test_parse_request_basic);
   mu_run("parse_request_trailing_slash", test_parse_request_trailing_slash);
-#if !CERVER_PLATFORM_WINDOWS
   mu_run("write_response_keepalive", test_write_response_keepalive);
   mu_run("write_response_force_close", test_write_response_force_close);
-#endif
   mu_run("route_match_and_dispatch", test_route_match_and_dispatch);
   mu_run("route_match_mismatch_resets_params", test_route_match_mismatch_resets_params);
   mu_run("route_match_multi_segment", test_route_match_multi_segment);
   mu_run("request_header_helpers", test_request_header_helpers);
   mu_run("static_embedded_prefers_br", test_static_embedded_prefers_br);
   mu_run("static_embedded_index_fallback", test_static_embedded_index_fallback);
-#if !CERVER_PLATFORM_WINDOWS
   mu_run("static_filesystem_small", test_static_filesystem_small);
   mu_run("static_filesystem_large", test_static_filesystem_large);
   mu_run("static_filesystem_directory_fallback", test_static_filesystem_directory_fallback);
-#endif
   mu_run("static_rejects_unsafe_path", test_static_rejects_unsafe_path);
   mu_run("stat_cache_store_lookup", test_stat_cache_store_lookup);
   mu_run("cerver_init_fields", test_cerver_init_fields);

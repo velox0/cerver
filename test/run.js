@@ -467,7 +467,7 @@ test("generateEmbeddedAssets emits C arrays and asset table entries", async () =
     assert.match(
       code,
       new RegExp(
-        `#define asset_css_app_css_len ${Buffer.byteLength(content)}u`,
+        `static const unsigned int asset_css_app_css_len = ${Buffer.byteLength(content)};`,
       ),
     );
     assert.match(
@@ -499,7 +499,7 @@ test("generateEmbeddedAssets can emit gzip variants for compressible assets", as
     );
     assert.match(
       code,
-      /#define asset_css_app_css_gz_len \d+u/,
+      /static const unsigned int asset_css_app_css_gz_len = \d+;/,
     );
     assert.match(
       code,

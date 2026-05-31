@@ -10,14 +10,11 @@
 
 #include "cerver.h"
 
-#if !CERVER_PLATFORM_WINDOWS || defined(CERVER_ENABLE_FETCH)
 #include <curl/curl.h>
-#endif
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
-#if !CERVER_PLATFORM_WINDOWS || defined(CERVER_ENABLE_FETCH)
 /* ------------------------------------------------------------------ */
 /*  Internal write callback for curl                                  */
 /* ------------------------------------------------------------------ */
@@ -56,7 +53,6 @@ static size_t fetch_write_cb(void* contents, size_t size, size_t nmemb, void* us
 static pthread_once_t curl_init_once = PTHREAD_ONCE_INIT;
 
 static void curl_global_init_once(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
-#endif
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
@@ -80,7 +76,6 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
     return empty;
   }
 
-#if !CERVER_PLATFORM_WINDOWS || defined(CERVER_ENABLE_FETCH)
   /* Ensure global curl init */
   pthread_once(&curl_init_once, curl_global_init_once);
 
@@ -160,13 +155,4 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
   curl_easy_cleanup(curl);
 
   return buf.data;
-#else
-  (void)method;
-  (void)body;
-  (void)headers;
-  fprintf(stderr, "cerver: fetch not enabled in this build (url: %s)\n", url);
-  char* empty = malloc(1);
-  if (empty) empty[0] = '\0';
-  return empty;
-#endif
 }
