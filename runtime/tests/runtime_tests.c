@@ -1,4 +1,4 @@
-#include "../cerver.h"
+#include "cerver.h"
 #include "minunit.h"
 
 #include <errno.h>
@@ -517,8 +517,8 @@ static void test_cerver_init_fields(void) {
   cerver_server_t srv;
   cerver_init(&srv, 9090, 3);
   MU_ASSERT_EQ_INT(9090, srv.port);
-  MU_ASSERT_EQ_INT(3, srv.worker_count);
-  MU_ASSERT_EQ_INT(-1, srv.sock_fd);
+  MU_ASSERT_EQ_INT(3, srv.connection_worker_count);
+  MU_ASSERT(srv.sock_fd == CERVER_INVALID_SOCK);
   MU_ASSERT_EQ_INT(0, srv.running);
 }
 

@@ -12,7 +12,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if !CERVER_PLATFORM_WINDOWS
 #include <strings.h>
+#endif  // !CERVER_PLATFORM_WINDOWS
+
 #include <ctype.h>
 
 /* ------------------------------------------------------------------ */

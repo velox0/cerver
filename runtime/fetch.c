@@ -50,9 +50,10 @@ static size_t fetch_write_cb(void* contents, size_t size, size_t nmemb, void* us
 /*  Global curl init (thread-safe, called once)                       */
 /* ------------------------------------------------------------------ */
 
-static pthread_once_t curl_init_once = PTHREAD_ONCE_INIT;
+static cerver_fetch_global_init_guard_t curl_global_init_guard =
+    CERVER_FETCH_GLOBAL_INIT_GUARD_INITIALIZER;
 
-static void curl_global_init_once(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
+static void init_curl_global_state(void) { curl_global_init(CURL_GLOBAL_DEFAULT); }
 
 /* ------------------------------------------------------------------ */
 /*  Public API                                                        */
@@ -77,7 +78,7 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
   }
 
   /* Ensure global curl init */
-  pthread_once(&curl_init_once, curl_global_init_once);
+  cerver_fetch_global_init_guard_run(&curl_global_init_guard, init_curl_global_state);
 
   CURL* curl = curl_easy_init();
   if (!curl) {
