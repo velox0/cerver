@@ -198,7 +198,7 @@ typedef struct cerver_server cerver_server_t;
 typedef struct {
   int              id;
   int              event_fd;  /* kqueue or epoll fd */
-  int              listen_fd; /* per-worker on Linux, shared on macOS */
+  cerver_sock_t    listen_fd; /* per-worker on Linux, shared on macOS */
   cerver_server_t* srv;
   pthread_t        thread;
 } cerver_worker_t;
@@ -209,7 +209,7 @@ typedef struct {
 
 struct cerver_server {
   int             port;
-  int             sock_fd;
+  cerver_sock_t   sock_fd;
   cerver_route_t* routes;
   int             route_count;
   cerver_asset_t* assets;

@@ -1,5 +1,6 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2 -D_GNU_SOURCE
+LIBS ?= -pthread -lcurl
 
 RUNTIME_SRCS = \
 	runtime/http_parser.c \
@@ -21,7 +22,7 @@ test-runtime: $(TEST_BIN)
 
 $(TEST_BIN): $(RUNTIME_SRCS) $(TEST_SRCS) runtime/cerver.h
 	mkdir -p build
-	$(CC) $(CFLAGS) -Iruntime -o $(TEST_BIN) $(RUNTIME_SRCS) $(TEST_SRCS) -pthread -lcurl
+	$(CC) $(CFLAGS) -Iruntime -o $(TEST_BIN) $(RUNTIME_SRCS) $(TEST_SRCS) $(LIBS)
 
 clean:
 	rm -rf build

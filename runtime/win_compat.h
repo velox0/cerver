@@ -22,7 +22,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <io.h>
-#include <fcntl.h>    /* _O_RDONLY, _O_BINARY */
+#include <fcntl.h>
 #include <process.h>
 #include <time.h>
 
@@ -88,14 +88,14 @@ static inline void* cerver_memmem_win(const void* hay, size_t hlen, const void* 
  * toolchains which do provide it are not accidentally overridden.    */
 #ifndef CLOCK_REALTIME
 #define CLOCK_REALTIME 0
-typedef struct {
+typedef struct cerver_timespec_t {
   long tv_sec;
   long tv_nsec;
 } cerver_timespec_t;
 #ifndef timespec
 #define timespec cerver_timespec_t
 #endif  // timespec
-static inline int clock_gettime(int clk_id, struct timespec* ts) {
+static inline int clock_gettime(int clk_id, cerver_timespec_t* ts) {
   (void)clk_id;
   FILETIME ft;
   GetSystemTimeAsFileTime(&ft);
