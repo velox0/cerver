@@ -1,5 +1,5 @@
 CC ?= cc
-CFLAGS ?= -std=c11 -Wall -Wextra -O2
+CFLAGS ?= -std=c11 -Wall -Wextra -O2 -D_GNU_SOURCE
 
 RUNTIME_SRCS = \
 	runtime/http_parser.c \

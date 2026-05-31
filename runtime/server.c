@@ -63,7 +63,7 @@
 /*  memmem fallback (also defined in win_compat.h for Windows)        */
 /* ------------------------------------------------------------------ */
 
-#if !CERVER_PLATFORM_WINDOWS && !defined(__APPLE__) && !defined(__linux__) && !defined(_GNU_SOURCE)
+#if !CERVER_PLATFORM_WINDOWS && !defined(__APPLE__) && !defined(_GNU_SOURCE)
 static void* cerver_memmem(const void* hay, size_t haylen, const void* needle, size_t nlen) {
   if (nlen == 0) return (void*)hay;
   if (nlen > haylen) return NULL;
