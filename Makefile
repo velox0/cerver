@@ -1,7 +1,11 @@
 CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
+ifeq ($(OS),Windows_NT)
+WIN_CC ?= gcc
+else
 WIN_CC ?= x86_64-w64-mingw32-gcc
-WIN_CFLAGS ?= -std=c11 -Wall -Wextra -O2 -D_WIN32_WINNT=0x0601 -DWIN32_LEAN_AND_MEAN -DCERVER_NO_CURL
+endif
+WIN_CFLAGS ?= -std=c11 -Wall -Wextra -O2 -D_WIN32_WINNT=0x0601 -DWINVER=0x0601 -DWIN32_LEAN_AND_MEAN -DCERVER_NO_CURL -D__USE_MINGW_ANSI_STDIO=1 -U__STRICT_ANSI__
 WIN_LDFLAGS ?= -lws2_32 -lmswsock -ladvapi32 -static
 
 RUNTIME_SRCS = \

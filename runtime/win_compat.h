@@ -146,13 +146,18 @@ static inline long cerver_nproc_win(void) {
 /* SIG_IGN is defined in <signal.h> on Windows */
 
 /* ---- native Windows thread backend ------------------------------- */
+
+/*
+ * Detect whether the toolchain headers provide Vista+ synchronization
+ * primitives (SRWLOCK, CONDITION_VARIABLE, INIT_ONCE).  mingw-w64 does;
+ * the original MinGW project does not, even with _WIN32_WINNT >= 0x0600.
+ * We test for a symbol that mingw-w64 always defines.
+ */
+#if defined(__MINGW64_VERSION_MAJOR) || defined(_MSC_VER)
+/* ---- mingw-w64 or MSVC: use native Vista+ primitives ------------- */
 typedef SRWLOCK            cerver_mutex_t;
 typedef CONDITION_VARIABLE cerver_cond_t;
 typedef INIT_ONCE          cerver_fetch_global_init_guard_t;
-typedef HANDLE             cerver_connection_worker_thread_t;
-typedef HANDLE             cerver_acceptor_thread_t;
-typedef size_t             cerver_connection_worker_thread_attr_t;
-typedef size_t             cerver_acceptor_thread_attr_t;
 
 #define CERVER_MUTEX_INITIALIZER                   SRWLOCK_INIT
 #define CERVER_COND_INITIALIZER                    CONDITION_VARIABLE_INIT
@@ -211,6 +216,120 @@ static inline int cerver_cond_broadcast(cerver_cond_t* c) {
   WakeAllConditionVariable(c);
   return 0;
 }
+
+static inline BOOL CALLBACK cerver_fetch_global_init_guard_stub(PINIT_ONCE InitOnce,
+                                                                PVOID Parameter, PVOID* Context) {
+  (void)InitOnce;
+  (void)Context;
+  void (*func)(void) = (void (*)(void))Parameter;
+  func();
+  return TRUE;
+}
+static inline int cerver_fetch_global_init_guard_run(cerver_fetch_global_init_guard_t* guard,
+                                                     void (*init_routine)(void)) {
+  InitOnceExecuteOnce(guard, cerver_fetch_global_init_guard_stub, init_routine, NULL);
+  return 0;
+}
+
+#else
+/* ---- old MinGW: fallback to CRITICAL_SECTION + Events ------------ */
+typedef CRITICAL_SECTION cerver_mutex_t;
+
+typedef struct {
+  HANDLE event;   /* auto-reset event for signal   */
+  HANDLE bcast;   /* manual-reset event for broadcast */
+} cerver_cond_t;
+
+typedef struct {
+  volatile LONG done;
+  CRITICAL_SECTION lock;
+} cerver_fetch_global_init_guard_t;
+
+/* Static initializers are not truly possible for CRITICAL_SECTION, so
+   we zero-init and rely on cerver_mutex_init() being called.  For the
+   two static structs in server.c that use CERVER_MUTEX_INITIALIZER we
+   call cerver_mutex_init() at startup via cerver_init(). */
+#define CERVER_MUTEX_INITIALIZER  {0}
+#define CERVER_COND_INITIALIZER   {0}
+#define CERVER_FETCH_GLOBAL_INIT_GUARD_INITIALIZER {0, {0}}
+
+static inline int cerver_mutex_init(cerver_mutex_t* m, void* attr) {
+  (void)attr;
+  InitializeCriticalSection(m);
+  return 0;
+}
+static inline int cerver_mutex_destroy(cerver_mutex_t* m) {
+  DeleteCriticalSection(m);
+  return 0;
+}
+static inline int cerver_mutex_lock(cerver_mutex_t* m) {
+  EnterCriticalSection(m);
+  return 0;
+}
+static inline int cerver_mutex_unlock(cerver_mutex_t* m) {
+  LeaveCriticalSection(m);
+  return 0;
+}
+
+static inline int cerver_cond_init(cerver_cond_t* c, void* attr) {
+  (void)attr;
+  c->event = CreateEvent(NULL, FALSE, FALSE, NULL); /* auto-reset */
+  c->bcast = CreateEvent(NULL, TRUE,  FALSE, NULL); /* manual-reset */
+  return (c->event && c->bcast) ? 0 : -1;
+}
+static inline int cerver_cond_destroy(cerver_cond_t* c) {
+  if (c->event) CloseHandle(c->event);
+  if (c->bcast) CloseHandle(c->bcast);
+  return 0;
+}
+static inline int cerver_cond_wait(cerver_cond_t* c, cerver_mutex_t* m) {
+  LeaveCriticalSection(m);
+  HANDLE h[2] = {c->event, c->bcast};
+  WaitForMultipleObjects(2, h, FALSE, INFINITE);
+  EnterCriticalSection(m);
+  return 0;
+}
+static inline int cerver_cond_timedwait(cerver_cond_t* c, cerver_mutex_t* m,
+                                        const struct timespec* ts) {
+  FILETIME ft;
+  GetSystemTimeAsFileTime(&ft);
+  ULONGLONG t = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+  t -= 116444736000000000ULL;
+  long long now_sec  = (long long)(t / 10000000ULL);
+  long long now_nsec = (long long)((t % 10000000ULL) * 100);
+
+  long long ms = (ts->tv_sec - now_sec) * 1000 + (ts->tv_nsec - now_nsec) / 1000000;
+  if (ms < 0) ms = 0;
+  LeaveCriticalSection(m);
+  HANDLE h[2] = {c->event, c->bcast};
+  DWORD r = WaitForMultipleObjects(2, h, FALSE, (DWORD)ms);
+  EnterCriticalSection(m);
+  return (r == WAIT_TIMEOUT) ? 110 : 0; /* 110 = ETIMEDOUT */
+}
+static inline int cerver_cond_signal(cerver_cond_t* c) {
+  SetEvent(c->event);
+  return 0;
+}
+static inline int cerver_cond_broadcast(cerver_cond_t* c) {
+  PulseEvent(c->bcast);
+  return 0;
+}
+
+static inline int cerver_fetch_global_init_guard_run(cerver_fetch_global_init_guard_t* guard,
+                                                     void (*init_routine)(void)) {
+  if (InterlockedCompareExchange(&guard->done, 1, 0) == 0) {
+    init_routine();
+  }
+  return 0;
+}
+
+#endif /* __MINGW64_VERSION_MAJOR || _MSC_VER */
+
+/* ---- thread helpers (shared across all Windows toolchains) -------- */
+typedef HANDLE             cerver_connection_worker_thread_t;
+typedef HANDLE             cerver_acceptor_thread_t;
+typedef size_t             cerver_connection_worker_thread_attr_t;
+typedef size_t             cerver_acceptor_thread_attr_t;
 
 static inline int cerver_connection_worker_thread_attr_init(
     cerver_connection_worker_thread_attr_t* attr) {
@@ -292,20 +411,6 @@ static inline int cerver_acceptor_thread_join(cerver_acceptor_thread_t thread, v
   (void)retval;
   WaitForSingleObject(thread, INFINITE);
   CloseHandle(thread);
-  return 0;
-}
-
-static inline BOOL CALLBACK cerver_fetch_global_init_guard_stub(PINIT_ONCE InitOnce,
-                                                                PVOID Parameter, PVOID* Context) {
-  (void)InitOnce;
-  (void)Context;
-  void (*func)(void) = (void (*)(void))Parameter;
-  func();
-  return TRUE;
-}
-static inline int cerver_fetch_global_init_guard_run(cerver_fetch_global_init_guard_t* guard,
-                                                     void (*init_routine)(void)) {
-  InitOnceExecuteOnce(guard, cerver_fetch_global_init_guard_stub, init_routine, NULL);
   return 0;
 }
 
