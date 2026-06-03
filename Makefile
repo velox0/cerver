@@ -2,7 +2,7 @@ CC ?= cc
 CFLAGS ?= -std=c11 -Wall -Wextra -O2
 WIN_CC ?= x86_64-w64-mingw32-gcc
 WIN_CFLAGS ?= -std=c11 -Wall -Wextra -O2 -D_WIN32_WINNT=0x0601 -DWIN32_LEAN_AND_MEAN -DCERVER_NO_CURL
-WIN_LDFLAGS ?= -lws2_32 -lmswsock -ladvapi32
+WIN_LDFLAGS ?= -lws2_32 -lmswsock -ladvapi32 -static
 
 RUNTIME_SRCS = \
 	runtime/http_parser.c \
@@ -33,6 +33,11 @@ $(TEST_BIN): $(RUNTIME_SRCS) $(TEST_SRCS) runtime/cerver.h
 	$(CC) $(CFLAGS) -Iruntime -o $(TEST_BIN) $(RUNTIME_SRCS) $(TEST_SRCS) -pthread -lcurl
 
 test-windows: $(WIN_TEST_BIN) $(WIN_OBJ)
+	@if [ "$$(uname -s)" = "Darwin" ]; then \
+		wine $(WIN_TEST_BIN); \
+	else \
+		./$(WIN_TEST_BIN); \
+	fi
 
 $(WIN_TEST_BIN): $(RUNTIME_SRCS) $(TEST_SRCS) runtime/cerver.h
 	mkdir -p build

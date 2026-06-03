@@ -47,10 +47,24 @@ typedef intptr_t ssize_t;
 
 /* read/write on a socket must go through recv/send on Windows */
 static inline ssize_t cerver_sock_read(int fd, void* buf, size_t n) {
-  return (ssize_t)recv((SOCKET)fd, (char*)buf, (int)n, 0);
+  int ret = recv((SOCKET)fd, (char*)buf, (int)n, 0);
+  if (ret == SOCKET_ERROR) {
+    int err = WSAGetLastError();
+    if (err == WSAENOTSOCK || err == WSANOTINITIALISED) {
+      return _read(fd, buf, (unsigned int)n);
+    }
+  }
+  return (ssize_t)ret;
 }
 static inline ssize_t cerver_sock_write(int fd, const void* buf, size_t n) {
-  return (ssize_t)send((SOCKET)fd, (const char*)buf, (int)n, 0);
+  int ret = send((SOCKET)fd, (const char*)buf, (int)n, 0);
+  if (ret == SOCKET_ERROR) {
+    int err = WSAGetLastError();
+    if (err == WSAENOTSOCK || err == WSANOTINITIALISED) {
+      return _write(fd, buf, (unsigned int)n);
+    }
+  }
+  return (ssize_t)ret;
 }
 
 /* fcntl / O_NONBLOCK replacement */

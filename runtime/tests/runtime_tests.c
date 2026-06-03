@@ -1,4 +1,4 @@
-#include "cerver.h"
+#include "../cerver.h"
 #include "minunit.h"
 
 #include <errno.h>
@@ -21,7 +21,7 @@
 #define cerver_test_close             _close
 #define cerver_test_read              _read
 #define cerver_test_write             _write
-#define cerver_test_pipe(fds)         _pipe((fds), 4096, _O_BINARY)
+#define cerver_test_pipe(fds)         _pipe((fds), 65536, _O_BINARY)
 #define cerver_test_unlink            _unlink
 #define cerver_test_rmdir             _rmdir
 #define cerver_test_mkdir(path, mode) _mkdir(path)
