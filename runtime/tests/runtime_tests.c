@@ -15,7 +15,7 @@
 #include <direct.h>
 #include <io.h>
 #ifndef PATH_MAX
-#define PATH_MAX _MAX_PATH
+#define PATH_MAX 260
 #endif  // PATH_MAX
 #define cerver_test_open              _open
 #define cerver_test_close             _close
@@ -50,6 +50,17 @@ static char* cerver_test_mkdtemp(char* tmpl) {
 #else
   return mkdtemp(tmpl);
 #endif  // CERVER_PLATFORM_WINDOWS
+}
+
+static void cerver_test_tmpdir_template(char* buf, size_t len) {
+#if CERVER_PLATFORM_WINDOWS
+  const char* tmp = getenv("TEMP");
+  if (!tmp) tmp = getenv("TMP");
+  if (!tmp) tmp = ".";
+  snprintf(buf, len, "%s\\cerver-test-XXXXXX", tmp);
+#else
+  snprintf(buf, len, "/tmp/cerver-test-XXXXXX");
+#endif
 }
 
 static const char* res_header(const cerver_response_t* res, const char* key) {
@@ -352,8 +363,9 @@ static void test_static_embedded_index_fallback(void) {
 }
 
 static void test_static_filesystem_directory_fallback(void) {
-  char  dir_template[] = "/tmp/cerver-test-XXXXXX";
-  char* dir            = cerver_test_mkdtemp(dir_template);
+  char dir_template[PATH_MAX];
+  cerver_test_tmpdir_template(dir_template, sizeof(dir_template));
+  char* dir = cerver_test_mkdtemp(dir_template);
   MU_ASSERT(dir != NULL);
 
   /* Create public/index.html (maps to /) */
@@ -430,8 +442,9 @@ static void test_static_filesystem_directory_fallback(void) {
 }
 
 static void test_static_filesystem_small(void) {
-  char  dir_template[] = "/tmp/cerver-test-XXXXXX";
-  char* dir            = cerver_test_mkdtemp(dir_template);
+  char dir_template[PATH_MAX];
+  cerver_test_tmpdir_template(dir_template, sizeof(dir_template));
+  char* dir = cerver_test_mkdtemp(dir_template);
   MU_ASSERT(dir != NULL);
 
   char file_path[PATH_MAX];
@@ -477,8 +490,9 @@ static void test_static_filesystem_small(void) {
 }
 
 static void test_static_filesystem_large(void) {
-  char  dir_template[] = "/tmp/cerver-test-XXXXXX";
-  char* dir            = cerver_test_mkdtemp(dir_template);
+  char dir_template[PATH_MAX];
+  cerver_test_tmpdir_template(dir_template, sizeof(dir_template));
+  char* dir = cerver_test_mkdtemp(dir_template);
   MU_ASSERT(dir != NULL);
 
   char file_path[PATH_MAX];
