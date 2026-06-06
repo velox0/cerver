@@ -226,12 +226,24 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
   char full_path[CERVER_MAX_PATH * 2];
   snprintf(full_path, sizeof(full_path), "%s%s", srv->public_dir, path);
 
+#if CERVER_PLATFORM_WINDOWS
+  /* Normalize forward slashes to backslashes for native Windows APIs */
+  for (char* p = full_path; *p; p++) {
+    if (*p == '/') *p = '\\';
+  }
+#endif
+
   /* Check if it's a directory — try fallback path */
   struct stat st;
   if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
     char fallback_path[CERVER_MAX_PATH];
     get_fallback_path(path, fallback_path, sizeof(fallback_path));
     snprintf(full_path, sizeof(full_path), "%s%s", srv->public_dir, fallback_path);
+#if CERVER_PLATFORM_WINDOWS
+    for (char* p = full_path; *p; p++) {
+      if (*p == '/') *p = '\\';
+    }
+#endif
     if (stat(full_path, &st) != 0) return -1;
   }
 
