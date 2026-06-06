@@ -148,9 +148,30 @@ Cerver supports a strict, synchronous subset of JavaScript suitable for C code g
 - `for` loops (`for (init; condition; update)`) and `while` loops
 - `const` / `let` variable declarations
 - String and Number literals
-- Template literals
-- Basic comparisons (`===`, `!==`, `<`, `>`)
+- Template literals (`` `Hello ${name}` ``)
+- Basic comparisons (`===`, `!==`, `<`, `>`, `<=`, `>=`)
+- Arithmetic operators (`+`, `-`, `*`, `/`, `%`) on numeric values
+- String concatenation with `+` when at least one operand is a known-string variable (auto-rewritten to a safe `snprintf` buffer)
 - Outbound API calls via `fetch(url, options)`
+
+### String Methods
+
+The following `String.prototype` methods compile to native C:
+
+| Method | Return | C equivalent |
+|---|---|---|
+| `s.toLowerCase()` | `string` | `cerver_str_tolower(s)` |
+| `s.toUpperCase()` | `string` | `cerver_str_toupper(s)` |
+| `s.trim()` | `string` | `cerver_str_trim(s)` |
+| `s.slice(start, end)` | `string` | `cerver_str_slice(s, start, end)` |
+| `s.replace(needle, replacement)` | `string` | `cerver_str_replace(s, needle, replacement)` |
+| `s.includes(needle)` | `boolean` (int) | `strstr(s, needle) != NULL` |
+| `s.startsWith(prefix)` | `boolean` (int) | `strncmp(s, prefix, strlen(prefix)) == 0` |
+| `s.endsWith(suffix)` | `boolean` (int) | `cerver_str_endswith(s, suffix)` |
+| `s.indexOf(needle)` | `number` (int) | `cerver_str_indexof(s, needle)` |
+| `s.length` | `number` (int) | `(int)strlen(s)` |
+
+String-returning methods (`toLowerCase`, `toUpperCase`, `trim`, `slice`, `replace`) must be used as a direct variable initializer or return value — not nested inside a larger expression — because they allocate a heap buffer.
 
 **Not Supported (Compile-Time Errors):**
 
@@ -158,6 +179,7 @@ Cerver supports a strict, synchronous subset of JavaScript suitable for C code g
 - Classes and the `new` keyword
 - `eval()`
 - Runtime `import`/`require`
+- String concatenation with `+` where both operands are string literals (use template literals instead)
 
 ## Configuration
 
@@ -176,20 +198,14 @@ export default {
 
 1. **Parser**: Uses Acorn to parse your JS route files into ASTs.
 2. **Validator**: Scans the AST to ensure no unsupported JS features are used.
-3. **IR**: Transforms the AST into an Intermediate Representation.
+3. **IR**: Transforms the AST into an Intermediate Representation. Includes a symbol table that tracks variable types for correct `+` operator coercion.
 4. **Generator**: Emits optimized C code mapping directly to your JS logic.
 5. **Asset Pipeline**: Scans the `public/` folder, minifies files, and converts them to C byte arrays.
 6. **Compiler**: Invokes `gcc` or `clang` to compile the generated code and the Cerver runtime into a native binary.
 
-## Future Optimisations
+## Known Limitations / Future Work
 
-These are known improvements that are deferred to keep the current implementation simple and correct.
-
-### Smart `+` Operator Coercion
-
-Currently, the validator rejects **all** uses of the `+` operator where at least one operand cannot be statically determined to be numeric. This is correct and safe — `char * + char *` in C is pointer arithmetic, not concatenation, and `gcc` errors are cryptic.
-
-**Planned improvement**: Teach the type inference pass (in `lib/ir/transform.js`) to track declared variable types through assignments. If both sides of `+` can be proven numeric (e.g., `let n = 0; n = n + 1`), allow it through. If either side is provably a string, automatically rewrite the `+` into an `IRConcat` node (same path as template literals) and emit the correct `snprintf` buffer — giving the user transparent JS semantics without requiring a template literal.
-
-This requires a symbol table mapping variable names to their inferred C types, propagated through the block transform context.
-
+- `replace()` only replaces the **first** occurrence (like JS). Global replace is not yet supported.
+- String methods that return strings cannot be nested (e.g. `s.trim().toLowerCase()` is not supported — store the intermediate in a variable).
+- The `+` type inference is forward-only; if a variable's type changes via reassignment the inferred type may be stale.
+- `slice()` operates on bytes, not Unicode code points.

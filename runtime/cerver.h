@@ -283,6 +283,29 @@ void              cerver_trie_free(void* trie);
 char* cerver_fetch(const char* url, const char* method, const char* body, const char** headers);
 
 /* ------------------------------------------------------------------ */
+/*  String operations (generated route code)                          */
+/* ------------------------------------------------------------------ */
+
+/* Case conversion — return malloc'd strings (caller must free) */
+char* cerver_str_tolower(const char* s);
+char* cerver_str_toupper(const char* s);
+
+/* Whitespace removal — returns malloc'd string */
+char* cerver_str_trim(const char* s);
+
+/* Substring — returns malloc'd string; end=-1 means "to end of string" */
+char* cerver_str_slice(const char* s, int start, int end);
+
+/* First-occurrence replace — returns malloc'd string */
+char* cerver_str_replace(const char* s, const char* needle, const char* replacement);
+
+/* Predicate helpers — return int, safe for inline expressions */
+int cerver_str_endswith(const char* s, const char* suffix);
+int cerver_str_indexof(const char* s, const char* needle);
+
+
+
+/* ------------------------------------------------------------------ */
 /*  MIME (internal)                                                   */
 /* ------------------------------------------------------------------ */
 

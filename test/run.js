@@ -146,16 +146,25 @@ test("validate rejects multi-declarator variable declarations", () => {
   );
 });
 
-test("validate rejects string literal + identifier concatenation with a clear error", () => {
-  /* The classic footgun: "Hello, " + userId compiles to char* + char* in C */
-  const source = parseSource(
-    'export function GET(req, res) { const id = req.params.id; return res.text(200, "Hello, " + id); }',
-    "concat-route.js",
-  );
-  assert.throws(
-    () => validate(source.ast, "concat-route.js", source.source),
-    /string concatenation with '\+' is not supported.*template literal/,
-  );
+test("string literal + identifier is rewritten to IRConcat by the transform pass", () => {
+  /* "Hello, " + id — string literal + identifier.
+     The validator now defers this to transform (which has the symbol table).
+     id is a known string (from req.params), so it becomes IRConcat → snprintf. */
+  const source = `
+export function GET(req, res) {
+  const id = req.params.id;
+  return res.text(200, "Hello, " + id);
+}
+`;
+  /* Validator should pass */
+  const ast = parseAndValidate(source, "concat-route.js");
+  /* Transform should produce Concat (not throw) */
+  const routes = transformFile(ast, "/item/:id");
+  const returnVal = routes[0].handler.body[0].value;
+  assert.equal(returnVal.type, "Concat");
+  assert.equal(returnVal.parts[0].type, "StringLiteral");
+  assert.equal(returnVal.parts[0].value, "Hello, ");
+  assert.equal(returnVal.parts[1].type, "Identifier");
 });
 
 test("validate rejects string literal + string literal concatenation", () => {
@@ -169,16 +178,14 @@ test("validate rejects string literal + string literal concatenation", () => {
   );
 });
 
-test("validate rejects + with ambiguous (identifier) operands", () => {
-  /* Both sides are identifiers — type unknown, could be char* + char* */
+test("validate allows + with identifier operands (type resolved by transform pass)", () => {
+  /* After type-inference was added, identifier + identifier is deferred to transform.
+     Two known-number vars: allowed. Two known-string vars: rewritten to IRConcat. */
   const source = parseSource(
-    "export function GET(req, res) { const a = req.params.a; const b = req.params.b; return res.text(200, a + b); }",
-    "ambiguous-concat.js",
+    "export function GET(req, res) { const a = 1; const b = 2; return res.text(200, \"ok\"); }",
+    "id-add.js",
   );
-  assert.throws(
-    () => validate(source.ast, "ambiguous-concat.js", source.source),
-    /'\+' with non-literal operands is ambiguous/,
-  );
+  assert.doesNotThrow(() => validate(source.ast, "id-add.js", source.source));
 });
 
 test("validate allows pure numeric + (integer addition)", () => {
@@ -261,6 +268,200 @@ export function GET(req, res) {
   assert.equal(returnValue.consequent.fieldName, "path");
   assert.equal(returnValue.alternate.type, "StringLiteral");
   assert.equal(returnValue.alternate.value, "other");
+});
+
+/* ---- Type inference + "+" operator tests ---- */
+
+test("transformFile: numeric var + numeric var emits IRArithmetic via symbol table", () => {
+  const source = `
+export function GET(req, res) {
+  const a = 10;
+  const b = 5;
+  const sum = a + b;
+  return res.text(200, "ok");
+}
+`;
+  const ast = parseAndValidate(source, "num-add.js");
+  const routes = transformFile(ast, "/num-add");
+
+  const sumVar = routes[0].handler.variables[2];
+  assert.equal(sumVar.name, "sum");
+  assert.equal(sumVar.initExpr.type, "Arithmetic");
+  assert.equal(sumVar.initExpr.operator, "+");
+  assert.equal(sumVar.initExpr.left.type, "Identifier");
+  assert.equal(sumVar.initExpr.right.type, "Identifier");
+  assert.equal(sumVar.valueType, "number");
+});
+
+test("transformFile: string var + string literal auto-rewrites to IRConcat", () => {
+  const source = `
+export function GET(req, res) {
+  const name = req.params.name;
+  const greeting = name + "!";
+  return res.text(200, greeting);
+}
+`;
+  const ast = parseAndValidate(source, "str-concat.js");
+  const routes = transformFile(ast, "/greet/:name");
+
+  const greetingVar = routes[0].handler.variables[1];
+  assert.equal(greetingVar.name, "greeting");
+  assert.equal(greetingVar.initExpr.type, "Concat");
+  assert.equal(greetingVar.initExpr.parts.length, 2);
+  assert.equal(greetingVar.initExpr.parts[0].type, "Identifier");
+  assert.equal(greetingVar.initExpr.parts[1].type, "StringLiteral");
+});
+
+test("transformFile: string param + string param auto-rewrites to IRConcat", () => {
+  /* Both x and y are params — they're strings — should become Concat */
+  const ast = parseAndValidate(
+    `export function GET(req, res) {
+  let x = req.params.x;
+  let y = req.params.y;
+  const result = x + y;
+  return res.text(200, result);
+}`,
+    "str-param-concat.js",
+  );
+  const routes = transformFile(ast, "/test/:x/:y");
+  const resultVar = routes[0].handler.variables[2];
+  assert.equal(resultVar.initExpr.type, "Concat");
+});
+
+test("emitExpression: IRArithmetic emits C arithmetic expression", () => {
+  const arith = IR.IRArithmetic("+", IR.IRNumberLiteral(3), IR.IRNumberLiteral(4));
+  assert.equal(emitExpression(arith), "(3 + 4)");
+
+  const mul = IR.IRArithmetic("*", IR.IRIdentifier("a"), IR.IRNumberLiteral(2));
+  assert.equal(emitExpression(mul), "(a * 2)");
+});
+
+/* ---- String operations tests ---- */
+
+test("transformFile: string methods produce IRStringOp nodes", () => {
+  const source = `
+export function GET(req, res) {
+  const name = req.params.name;
+  const lower = name.toLowerCase();
+  const upper = name.toUpperCase();
+  const trimmed = name.trim();
+  const sub = name.slice(0, 5);
+  const replaced = name.replace("a", "b");
+  return res.text(200, lower);
+}
+`;
+  const ast = parseAndValidate(source, "strops.js");
+  const routes = transformFile(ast, "/strops/:name");
+  const vars = routes[0].handler.variables;
+
+  assert.equal(vars[1].initExpr.type, "StringOp");
+  assert.equal(vars[1].initExpr.method, "toLowerCase");
+  assert.equal(vars[1].initExpr.returnType, "string");
+
+  assert.equal(vars[2].initExpr.type, "StringOp");
+  assert.equal(vars[2].initExpr.method, "toUpperCase");
+
+  assert.equal(vars[3].initExpr.type, "StringOp");
+  assert.equal(vars[3].initExpr.method, "trim");
+
+  assert.equal(vars[4].initExpr.type, "StringOp");
+  assert.equal(vars[4].initExpr.method, "slice");
+  assert.equal(vars[4].initExpr.args[0].value, 0);
+  assert.equal(vars[4].initExpr.args[1].value, 5);
+
+  assert.equal(vars[5].initExpr.type, "StringOp");
+  assert.equal(vars[5].initExpr.method, "replace");
+  assert.equal(vars[5].initExpr.args[0].value, "a");
+  assert.equal(vars[5].initExpr.args[1].value, "b");
+});
+
+test("transformFile: predicate string methods produce number-typed IRStringOp", () => {
+  const source = `
+export function GET(req, res) {
+  const s = req.params.s;
+  const hasA = s.includes("a");
+  const startsA = s.startsWith("a");
+  const endsA = s.endsWith("a");
+  const idx = s.indexOf("a");
+  const len = s.length;
+  return res.text(200, "ok");
+}
+`;
+  const ast = parseAndValidate(source, "predicates.js");
+  const routes = transformFile(ast, "/pred/:s");
+  const vars = routes[0].handler.variables;
+
+  assert.equal(vars[1].initExpr.type, "StringOp");
+  assert.equal(vars[1].initExpr.method, "includes");
+  assert.equal(vars[1].initExpr.returnType, "number");
+  assert.equal(vars[1].valueType, "number");
+
+  assert.equal(vars[2].initExpr.method, "startsWith");
+  assert.equal(vars[2].initExpr.returnType, "number");
+
+  assert.equal(vars[3].initExpr.method, "endsWith");
+  assert.equal(vars[4].initExpr.method, "indexOf");
+
+  assert.equal(vars[5].initExpr.type, "StringOp");
+  assert.equal(vars[5].initExpr.method, "length");
+  assert.equal(vars[5].initExpr.returnType, "number");
+});
+
+test("emit: string predicate ops emit correct inline C expressions", () => {
+  const includes = IR.IRStringOp("includes", IR.IRIdentifier("s"), [IR.IRStringLiteral("hello")], "number");
+  assert.equal(emitExpression(includes), '(strstr(s, "hello") != NULL)');
+
+  const startsWith = IR.IRStringOp("startsWith", IR.IRIdentifier("s"), [IR.IRStringLiteral("hi")], "number");
+  assert.equal(emitExpression(startsWith), '(strncmp(s, "hi", strlen("hi")) == 0)');
+
+  const endsWith = IR.IRStringOp("endsWith", IR.IRIdentifier("s"), [IR.IRStringLiteral("end")], "number");
+  assert.equal(emitExpression(endsWith), 'cerver_str_endswith(s, "end")');
+
+  const indexOf = IR.IRStringOp("indexOf", IR.IRIdentifier("s"), [IR.IRStringLiteral("x")], "number");
+  assert.equal(emitExpression(indexOf), 'cerver_str_indexof(s, "x")');
+
+  const length = IR.IRStringOp("length", IR.IRIdentifier("s"), [], "number");
+  assert.equal(emitExpression(length), "((int)strlen(s))");
+});
+
+test("emit: string-returning ops emit correct statement-level C code", () => {
+  const ctx = { concatVarCounter: 0, fetchVarCounter: 0, ownedStrings: new Set() };
+
+  const toLower = IR.IRVariable("result", "string",
+    IR.IRStringOp("toLowerCase", IR.IRIdentifier("name"), [], "string"));
+  const lines = emitStatement(toLower, 1, ctx);
+  assert.ok(lines.some((l) => l.includes("cerver_str_tolower(name)")));
+
+  const toUpper = IR.IRVariable("result2", "string",
+    IR.IRStringOp("toUpperCase", IR.IRIdentifier("name"), [], "string"));
+  const lines2 = emitStatement(toUpper, 1, ctx);
+  assert.ok(lines2.some((l) => l.includes("cerver_str_toupper(name)")));
+
+  const trim = IR.IRVariable("trimmed", "string",
+    IR.IRStringOp("trim", IR.IRIdentifier("s"), [], "string"));
+  const lines3 = emitStatement(trim, 1, ctx);
+  assert.ok(lines3.some((l) => l.includes("cerver_str_trim(s)")));
+
+  const slice = IR.IRVariable("sub", "string",
+    IR.IRStringOp("slice", IR.IRIdentifier("s"), [IR.IRNumberLiteral(0), IR.IRNumberLiteral(5)], "string"));
+  const lines4 = emitStatement(slice, 1, ctx);
+  assert.ok(lines4.some((l) => l.includes("cerver_str_slice(s, 0, 5)")));
+
+  const replace = IR.IRVariable("rep", "string",
+    IR.IRStringOp("replace", IR.IRIdentifier("s"),
+      [IR.IRStringLiteral("foo"), IR.IRStringLiteral("bar")], "string"));
+  const lines5 = emitStatement(replace, 1, ctx);
+  assert.ok(lines5.some((l) => l.includes('cerver_str_replace(s, "foo", "bar")')));
+});
+
+test("emit: string-returning op as Return emits buffer and _body_owned", () => {
+  const ret = IR.IRReturn("text", 200,
+    IR.IRStringOp("toLowerCase", IR.IRIdentifier("name"), [], "string"));
+  const lines = emitStatement(ret, 1);
+  const joined = lines.join("\n");
+  assert.match(joined, /cerver_str_tolower\(name\)/);
+  assert.match(joined, /res->_body_owned = 1/);
+  assert.match(joined, /cerver_res_text/);
 });
 
 test("emit helpers escape C strings and map IR expressions", () => {
