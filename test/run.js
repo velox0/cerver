@@ -146,6 +146,61 @@ test("validate rejects multi-declarator variable declarations", () => {
   );
 });
 
+test("validate rejects string literal + identifier concatenation with a clear error", () => {
+  /* The classic footgun: "Hello, " + userId compiles to char* + char* in C */
+  const source = parseSource(
+    'export function GET(req, res) { const id = req.params.id; return res.text(200, "Hello, " + id); }',
+    "concat-route.js",
+  );
+  assert.throws(
+    () => validate(source.ast, "concat-route.js", source.source),
+    /string concatenation with '\+' is not supported.*template literal/,
+  );
+});
+
+test("validate rejects string literal + string literal concatenation", () => {
+  const source = parseSource(
+    'export function GET(req, res) { return res.text(200, "Hello, " + "world"); }',
+    "literal-concat.js",
+  );
+  assert.throws(
+    () => validate(source.ast, "literal-concat.js", source.source),
+    /string concatenation with '\+' is not supported.*template literal/,
+  );
+});
+
+test("validate rejects + with ambiguous (identifier) operands", () => {
+  /* Both sides are identifiers — type unknown, could be char* + char* */
+  const source = parseSource(
+    "export function GET(req, res) { const a = req.params.a; const b = req.params.b; return res.text(200, a + b); }",
+    "ambiguous-concat.js",
+  );
+  assert.throws(
+    () => validate(source.ast, "ambiguous-concat.js", source.source),
+    /'\+' with non-literal operands is ambiguous/,
+  );
+});
+
+test("validate allows pure numeric + (integer addition)", () => {
+  const source = parseSource(
+    "export function GET(req, res) { const n = 1 + 2; return res.text(200, \"ok\"); }",
+    "numeric-add.js",
+  );
+  assert.doesNotThrow(() => validate(source.ast, "numeric-add.js", source.source));
+});
+
+test("validate rejects template literal used with + operator", () => {
+  /* `hello ${name}` + " world" — the left side is a TemplateLiteral (string) */
+  const source = parseSource(
+    'export function GET(req, res) { const id = req.params.id; return res.text(200, `Hello ${id}` + "!"); }',
+    "template-plus.js",
+  );
+  assert.throws(
+    () => validate(source.ast, "template-plus.js", source.source),
+    /string concatenation with '\+' is not supported.*template literal/,
+  );
+});
+
 test("transformFile produces route IR for params, query, headers, and template returns", () => {
   const source = `
 export function GET(req, res) {

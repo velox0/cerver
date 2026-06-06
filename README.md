@@ -180,3 +180,16 @@ export default {
 4. **Generator**: Emits optimized C code mapping directly to your JS logic.
 5. **Asset Pipeline**: Scans the `public/` folder, minifies files, and converts them to C byte arrays.
 6. **Compiler**: Invokes `gcc` or `clang` to compile the generated code and the Cerver runtime into a native binary.
+
+## Future Optimisations
+
+These are known improvements that are deferred to keep the current implementation simple and correct.
+
+### Smart `+` Operator Coercion
+
+Currently, the validator rejects **all** uses of the `+` operator where at least one operand cannot be statically determined to be numeric. This is correct and safe — `char * + char *` in C is pointer arithmetic, not concatenation, and `gcc` errors are cryptic.
+
+**Planned improvement**: Teach the type inference pass (in `lib/ir/transform.js`) to track declared variable types through assignments. If both sides of `+` can be proven numeric (e.g., `let n = 0; n = n + 1`), allow it through. If either side is provably a string, automatically rewrite the `+` into an `IRConcat` node (same path as template literals) and emit the correct `snprintf` buffer — giving the user transparent JS semantics without requiring a template literal.
+
+This requires a symbol table mapping variable names to their inferred C types, propagated through the block transform context.
+
