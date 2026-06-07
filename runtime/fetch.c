@@ -120,10 +120,19 @@ char* cerver_fetch(const char* url, const char* method, const char* body, const 
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fetch_write_cb);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&buf);
   curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+  curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L); /* cap redirect chain */
   curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
   curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
   curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L); /* thread-safe */
   curl_easy_setopt(curl, CURLOPT_USERAGENT, "cerver/1.0");
+  /* Restrict to HTTP and HTTPS only — blocks file://, gopher://, dict://, etc. */
+#if CURL_AT_LEAST_VERSION(7, 85, 0)
+  curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
+  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
+#else
+  curl_easy_setopt(curl, CURLOPT_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+  curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif  // CURL_AT_LEAST_VERSION(7, 85, 0)
 
   /* Set HTTP method */
   if (method) {
