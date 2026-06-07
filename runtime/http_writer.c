@@ -142,28 +142,34 @@ static const char* status_text(int code) {
 int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
   cerver_sock_t sfd = (cerver_sock_t)fd;
 
-  char header[4096];
-  int  hlen = 0;
+  char   header[4096];
+  size_t hlen = 0;
 
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "HTTP/1.1 %d %s\r\n", res->status,
-                   status_text(res->status));
-  if (res->content_type)
-    hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Type: %s\r\n",
-                     res->content_type);
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Content-Length: %zu\r\n",
-                   res->body_len);
+#define HDR_APPEND(...)                                                     \
+  do {                                                                      \
+    if (hlen < sizeof(header)) {                                            \
+      int _n = snprintf(header + hlen, sizeof(header) - hlen, __VA_ARGS__); \
+      if (_n > 0) hlen += (size_t)_n;                                       \
+      if (hlen > sizeof(header)) hlen = sizeof(header);                     \
+    }                                                                       \
+  } while (0)
+
+  HDR_APPEND("HTTP/1.1 %d %s\r\n", res->status, status_text(res->status));
+  if (res->content_type) HDR_APPEND("Content-Type: %s\r\n", res->content_type);
+  HDR_APPEND("Content-Length: %zu\r\n", res->body_len);
   for (int i = 0; i < res->header_count; i++)
-    hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "%s: %s\r\n",
-                     res->headers[i].key, res->headers[i].value);
+    HDR_APPEND("%s: %s\r\n", res->headers[i].key, res->headers[i].value);
   if (keepalive && !res->_force_close)
-    hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Connection: keep-alive\r\n");
+    HDR_APPEND("Connection: keep-alive\r\n");
   else
-    hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Connection: close\r\n");
-  hlen += snprintf(header + hlen, sizeof(header) - (size_t)hlen, "Server: cerver\r\n\r\n");
+    HDR_APPEND("Connection: close\r\n");
+  HDR_APPEND("Server: cerver\r\n\r\n");
+
+#undef HDR_APPEND
 
   if (res->_body_owned == 3) {
     /* File-descriptor sendfile path */
-    if (send_all(sfd, header, (size_t)hlen) < 0) return -1;
+    if (send_all(sfd, header, hlen) < 0) return -1;
     size_t total = res->body_len, sent = 0;
     while (sent < total) {
       ssize_t n = do_sendfile(sfd, res->_file_fd, (off_t)sent, total - sent);
@@ -177,17 +183,17 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
       sent += (size_t)n;
     }
   } else if (res->body && res->body_len > 0) {
-    if ((size_t)hlen + res->body_len <= sizeof(header)) {
+    if (hlen + res->body_len <= sizeof(header)) {
       /* Small response: one syscall */
       memcpy(header + hlen, res->body, res->body_len);
-      if (send_all(sfd, header, (size_t)hlen + res->body_len) < 0) return -1;
+      if (send_all(sfd, header, hlen + res->body_len) < 0) return -1;
     } else {
       /* Large response: header then body */
-      if (send_all(sfd, header, (size_t)hlen) < 0) return -1;
+      if (send_all(sfd, header, hlen) < 0) return -1;
       if (send_all(sfd, res->body, res->body_len) < 0) return -1;
     }
   } else {
-    if (send_all(sfd, header, (size_t)hlen) < 0) return -1;
+    if (send_all(sfd, header, hlen) < 0) return -1;
   }
 
   return 0;
