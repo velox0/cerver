@@ -1,6 +1,6 @@
 {
   "name": "@velox0/cerver",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Compile restricted JavaScript server logic into optimized native C binaries (cross-platform: Linux, macOS, Windows)",
   "main": "bin/cerver.js",
   "bin": {
