@@ -404,8 +404,9 @@ test("emit: str.concat() as variable initializer emits snprintf block", () => {
   const lines = emitStatement(concatVar, 1, ctx);
   const joined = lines.join("\n");
 
-  assert.match(joined, /malloc\(1024\)/);
-  assert.match(joined, /snprintf\(full, 1024, "%s %s", first, last\)/);
+  assert.match(joined, /snprintf\(NULL, 0, "%s %s", first, last\)/);
+  assert.match(joined, /malloc\(full_len \+ 1\)/);
+  assert.match(joined, /snprintf\(full, full_len \+ 1, "%s %s", first, last\)/);
   assert.ok(ctx.ownedStrings.has("full"), "concat result should be tracked as owned");
 });
 
@@ -579,8 +580,9 @@ test("emit handles direct concat returns and rejects nested statement-only expre
   const joined = lines.join("\n");
 
   assert.doesNotMatch(joined, /__concat_/);
-  assert.match(joined, /malloc\(1024\)/);
-  assert.match(joined, /snprintf\(_concat_res_0, 1024, "hello %s", name\);/);
+  assert.match(joined, /snprintf\(NULL, 0, "hello %s", name\)/);
+  assert.match(joined, /malloc\(_concat_res_0_len \+ 1\)/);
+  assert.match(joined, /snprintf\(_concat_res_0, _concat_res_0_len \+ 1, "hello %s", name\);/);
   assert.match(joined, /res->_body_owned = 1/);
 
   assert.throws(
