@@ -60,7 +60,7 @@ static void cerver_test_tmpdir_template(char* buf, size_t len) {
   snprintf(buf, len, "%s\\cerver-test-XXXXXX", tmp);
 #else
   snprintf(buf, len, "/tmp/cerver-test-XXXXXX");
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 }
 
 static const char* res_header(const cerver_response_t* res, const char* key) {

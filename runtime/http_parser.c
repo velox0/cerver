@@ -180,9 +180,13 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
         req->headers[req->header_count].value = val;
         req->header_count++;
 
-        /* Track content-length */
+        /* Track content-length — use strtoul so negative values are rejected */
         if (strcasecmp(hdr_start, "Content-Length") == 0) {
-          content_length = (size_t)atol(val);
+          char*         endp = NULL;
+          unsigned long cl   = strtoul(val, &endp, 10);
+          if (endp != val && *endp == '\0' && cl > 0 && cl <= (unsigned long)CERVER_READ_BUF_MAX) {
+            content_length = (size_t)cl;
+          }
         }
       }
     }

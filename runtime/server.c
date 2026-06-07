@@ -33,6 +33,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
+#include <strings.h>
 #endif  // !CERVER_PLATFORM_WINDOWS
 
 #if defined(__APPLE__) || defined(__FreeBSD__)
@@ -214,6 +215,7 @@ static char* read_full_request(cerver_sock_t fd, size_t* out_len) {
      per-connection in handle_connection).  Just read normally. */
 #endif  // CERVER_PLATFORM_WINDOWS
 
+  /* Phase 1: read until we have the full header section (\r\n\r\n). */
   while (len < (size_t)CERVER_READ_BUF_MAX) {
     ssize_t n = (ssize_t)cerver_sock_read(fd, buf + len, cap - len);
     if (n <= 0) break;
@@ -236,6 +238,75 @@ static char* read_full_request(cerver_sock_t fd, size_t* out_len) {
     free(buf);
     return NULL;
   }
+
+  /*
+   * Phase 2: if a Content-Length header is present, read the body.
+   *
+   * Scan the headers we just received for "Content-Length:" and compute
+   * how many body bytes we still need to pull from the socket.  We do a
+   * minimal in-buffer scan here (before the real parser runs) so that the
+   * body always arrives in the same allocation that the parser will
+   * reference — preventing request smuggling over keep-alive connections.
+   */
+  buf[len]                = '\0';
+  const char* hdr_end_ptr = (const char*)memmem(buf, len, "\r\n\r\n", 4);
+  if (hdr_end_ptr) {
+    size_t hdr_block_len  = (size_t)(hdr_end_ptr - buf) + 4;
+    size_t content_length = 0;
+
+    /* Case-insensitive scan for Content-Length within the header block. */
+    const char* p = buf;
+    while (p < buf + hdr_block_len) {
+      const char* eol = (const char*)memmem(p, (size_t)(buf + hdr_block_len - p), "\r\n", 2);
+      if (!eol) break;
+      size_t line_len = (size_t)(eol - p);
+      if (line_len > 15 && (p[0] == 'C' || p[0] == 'c') &&
+          strncasecmp(p, "Content-Length:", 15) == 0) {
+        const char* val  = p + 15;
+        char*       endp = NULL;
+        while (*val == ' ' || *val == '\t') val++;
+        unsigned long cl = strtoul(val, &endp, 10);
+        if (endp != val && cl > 0 && cl <= (unsigned long)CERVER_READ_BUF_MAX) {
+          content_length = (size_t)cl;
+        }
+        break;
+      }
+      p = eol + 2;
+    }
+
+    if (content_length > 0) {
+      size_t body_received = (len > hdr_block_len) ? (len - hdr_block_len) : 0;
+      size_t body_needed  = (content_length > body_received) ? (content_length - body_received) : 0;
+      size_t total_needed = len + body_needed;
+
+      if (total_needed > (size_t)CERVER_READ_BUF_MAX) {
+        /* Body would exceed hard limit — clamp to what we'll accept. */
+        total_needed = (size_t)CERVER_READ_BUF_MAX;
+        body_needed  = (total_needed > len) ? (total_needed - len) : 0;
+      }
+
+      if (body_needed > 0) {
+        if (total_needed > cap) {
+          char* tmp = realloc(buf, total_needed + 1);
+          if (!tmp) {
+            free(buf);
+            return NULL;
+          }
+          buf = tmp;
+          cap = total_needed;
+        }
+
+        /* Read exactly the remaining body bytes. */
+        while (body_needed > 0) {
+          ssize_t n = (ssize_t)cerver_sock_read(fd, buf + len, body_needed);
+          if (n <= 0) break;
+          len += (size_t)n;
+          body_needed -= (size_t)n;
+        }
+      }
+    }
+  }
+
   buf[len] = '\0';
   *out_len = len;
   return buf;
@@ -261,10 +332,10 @@ static void handle_connection(cerver_server_t* srv, cerver_sock_t client_fd) {
                sizeof(nodelay));
   }
 
-  int request_count = 0;
-  int keepalive     = 1;
+  unsigned int request_count = 0;
+  int          keepalive     = 1;
 
-  while (keepalive && srv->running && request_count < CERVER_KEEPALIVE_MAX) {
+  while (keepalive && srv->running && request_count < (unsigned int)CERVER_KEEPALIVE_MAX) {
     int timeout_sec = (request_count == 0) ? 5 : CERVER_KEEPALIVE_TIMEOUT;
 
 #if CERVER_PLATFORM_WINDOWS

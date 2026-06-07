@@ -97,6 +97,9 @@ static inline void* cerver_memmem_win(const void* hay, size_t hlen, const void* 
 #ifndef strcasecmp
 #define strcasecmp _stricmp
 #endif  // strcasecmp
+#ifndef strncasecmp
+#define strncasecmp _strnicmp
+#endif  // strncasecmp
 
 /* clock_gettime / CLOCK_REALTIME are missing from some Windows CRTs. */
 #ifndef CLOCK_REALTIME
@@ -323,7 +326,7 @@ static inline int cerver_fetch_global_init_guard_run(cerver_fetch_global_init_gu
   return 0;
 }
 
-#endif /* __MINGW64_VERSION_MAJOR || _MSC_VER */
+#endif  // __MINGW64_VERSION_MAJOR || _MSC_VER
 
 /* ---- thread helpers (shared across all Windows toolchains) -------- */
 typedef HANDLE cerver_connection_worker_thread_t;
