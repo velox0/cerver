@@ -43,7 +43,7 @@ static uint32_t fnv1a(const char* str) {
 /* ------------------------------------------------------------------ */
 
 static int path_is_safe(const char* path) {
-  /* Reject paths with ".." */
+  /* Reject paths with ".." (literal traversal) */
   if (strstr(path, "..")) return 0;
 
   /* Reject paths with null bytes */
@@ -51,6 +51,34 @@ static int path_is_safe(const char* path) {
 
   /* Must start with "/" */
   if (path[0] != '/') return 0;
+
+  /* Reject encoded traversal sequences that survive url_decode:
+   * url_decode runs before us, but double-encoding (%252e) and
+   * mixed-case variants may slip through on some paths.  Reject any
+   * remaining %XX sequences that decode to '.' or '/'. */
+  const char* p = path;
+  while (*p) {
+    if (*p == '%' && p[1] && p[2]) {
+      int hi = (p[1] >= '0' && p[1] <= '9')   ? p[1] - '0'
+               : (p[1] >= 'a' && p[1] <= 'f') ? p[1] - 'a' + 10
+               : (p[1] >= 'A' && p[1] <= 'F') ? p[1] - 'A' + 10
+                                              : -1;
+      int lo = (p[2] >= '0' && p[2] <= '9')   ? p[2] - '0'
+               : (p[2] >= 'a' && p[2] <= 'f') ? p[2] - 'a' + 10
+               : (p[2] >= 'A' && p[2] <= 'F') ? p[2] - 'A' + 10
+                                              : -1;
+      if (hi >= 0 && lo >= 0) {
+        int decoded = (hi << 4) | lo;
+        /* Reject if it would decode to '.' (0x2e), '/' (0x2f), or '\' (0x5c) */
+        if (decoded == 0x2e || decoded == 0x2f || decoded == 0x5c) return 0;
+      }
+    }
+#if CERVER_PLATFORM_WINDOWS
+    /* Reject backslashes directly in the path */
+    if (*p == '\\') return 0;
+#endif  // CERVER_PLATFORM_WINDOWS
+    p++;
+  }
 
   return 1;
 }
@@ -64,13 +92,36 @@ typedef struct {
   int accepts_br;
 } encoding_prefs_t;
 
+/*
+ * Check whether `token` appears as a standalone comma-separated token in
+ * the Accept-Encoding header value.  Using strstr() would produce false
+ * positives (e.g. "br" matching inside "cobr" or "brotli").
+ */
+static int ae_has_token(const char* ae, const char* token) {
+  size_t      tlen = strlen(token);
+  const char* p    = ae;
+  while (*p) {
+    /* Skip whitespace and commas */
+    while (*p == ' ' || *p == '\t' || *p == ',') p++;
+    if (!*p) break;
+    /* Find end of this token (stop at comma, semicolon, space, or NUL) */
+    const char* start = p;
+    while (*p && *p != ',' && *p != ';' && *p != ' ' && *p != '\t') p++;
+    size_t len = (size_t)(p - start);
+    if (len == tlen && memcmp(start, token, tlen) == 0) return 1;
+    /* Skip quality value if present (;q=0.9) */
+    while (*p && *p != ',') p++;
+  }
+  return 0;
+}
+
 static encoding_prefs_t parse_accept_encoding(const cerver_request_t* req) {
   encoding_prefs_t prefs = {0, 0};
   const char*      ae    = cerver_req_header(req, "Accept-Encoding");
   if (!ae) return prefs;
 
-  if (strstr(ae, "br")) prefs.accepts_br = 1;
-  if (strstr(ae, "gzip")) prefs.accepts_gzip = 1;
+  if (ae_has_token(ae, "br")) prefs.accepts_br = 1;
+  if (ae_has_token(ae, "gzip")) prefs.accepts_gzip = 1;
 
   return prefs;
 }
@@ -222,28 +273,41 @@ static int serve_filesystem(cerver_server_t* srv, cerver_request_t* req, cerver_
   const char* path = req->path;
   if (!path_is_safe(path)) return -1;
 
-  /* Build the full filesystem path */
+  /* Build the full filesystem path — reject if it would overflow. */
+  size_t dir_len  = strlen(srv->public_dir);
+  size_t path_len = strlen(path);
+  if (dir_len + path_len + 1 > sizeof(((struct { char b[CERVER_MAX_PATH * 2]; }){}).b)) return -1;
+
   char full_path[CERVER_MAX_PATH * 2];
+  /* Bounds already verified above; silence -Wformat-truncation. */
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+#endif  // __GNUC__ && !__clang__
   snprintf(full_path, sizeof(full_path), "%s%s", srv->public_dir, path);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif  // __GNUC__ && !__clang__
 
 #if CERVER_PLATFORM_WINDOWS
   /* Normalize forward slashes to backslashes for native Windows APIs */
   for (char* p = full_path; *p; p++) {
     if (*p == '/') *p = '\\';
   }
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
 
   /* Check if it's a directory — try fallback path */
   struct stat st;
   if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
     char fallback_path[CERVER_MAX_PATH];
     get_fallback_path(path, fallback_path, sizeof(fallback_path));
+    if (dir_len + strlen(fallback_path) + 1 > sizeof(full_path)) return -1;
     snprintf(full_path, sizeof(full_path), "%s%s", srv->public_dir, fallback_path);
 #if CERVER_PLATFORM_WINDOWS
     for (char* p = full_path; *p; p++) {
       if (*p == '/') *p = '\\';
     }
-#endif
+#endif  // CERVER_PLATFORM_WINDOWS
     if (stat(full_path, &st) != 0) return -1;
   }
 
