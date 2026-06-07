@@ -167,15 +167,21 @@ export function GET(req, res) {
   assert.equal(returnVal.parts[1].type, "Identifier");
 });
 
-test("validate rejects string literal + string literal concatenation", () => {
-  const source = parseSource(
+test("string literal + string literal compiles to a single merged C string literal", () => {
+  /* Now that the validator no longer blocks literal+literal, the transform
+     produces IRConcat([StringLiteral, StringLiteral]) which the emitter
+     collapses to a single compile-time string. */
+  const ast = parseAndValidate(
     'export function GET(req, res) { return res.text(200, "Hello, " + "world"); }',
     "literal-concat.js",
   );
-  assert.throws(
-    () => validate(source.ast, "literal-concat.js", source.source),
-    /string concatenation with '\+' is not supported.*template literal/,
-  );
+  const routes = transformFile(ast, "/greet");
+  const returnVal = routes[0].handler.body[0].value;
+  /* The transform phase's createConcat now collapses adjacent string literals immediately. */
+  assert.equal(returnVal.type, "StringLiteral");
+  assert.equal(returnVal.value, "Hello, world");
+  /* Verify the emitter outputs the correct C string literal */
+  assert.equal(emitExpression(returnVal), '"Hello, world"');
 });
 
 test("validate allows + with identifier operands (type resolved by transform pass)", () => {
@@ -196,16 +202,18 @@ test("validate allows pure numeric + (integer addition)", () => {
   assert.doesNotThrow(() => validate(source.ast, "numeric-add.js", source.source));
 });
 
-test("validate rejects template literal used with + operator", () => {
-  /* `hello ${name}` + " world" — the left side is a TemplateLiteral (string) */
-  const source = parseSource(
+test("template literal + string literal becomes a Concat with flattened parts", () => {
+  /* `Hello ${id}` + "!" — the transform produces IRConcat from the template,
+     then IRConcat([that, StringLiteral]) for the outer +. The emitter handles
+     this as a single snprintf with all parts. */
+  const ast = parseAndValidate(
     'export function GET(req, res) { const id = req.params.id; return res.text(200, `Hello ${id}` + "!"); }',
     "template-plus.js",
   );
-  assert.throws(
-    () => validate(source.ast, "template-plus.js", source.source),
-    /string concatenation with '\+' is not supported.*template literal/,
-  );
+  const routes = transformFile(ast, "/test/:id");
+  const returnVal = routes[0].handler.body[0].value;
+  /* The outer + sees left=Concat (string type) → rewrites to Concat */
+  assert.equal(returnVal.type, "Concat");
 });
 
 test("transformFile produces route IR for params, query, headers, and template returns", () => {
@@ -334,6 +342,71 @@ test("emitExpression: IRArithmetic emits C arithmetic expression", () => {
 
   const mul = IR.IRArithmetic("*", IR.IRIdentifier("a"), IR.IRNumberLiteral(2));
   assert.equal(emitExpression(mul), "(a * 2)");
+});
+
+/* ---- String.prototype.concat() tests ---- */
+
+test("transformFile: str.concat(a, b) produces IRConcat with receiver + args", () => {
+  const source = `
+export function GET(req, res) {
+  const first = req.params.first;
+  const last = req.params.last;
+  const full = first.concat(" ", last);
+  return res.text(200, full);
+}
+`;
+  const ast = parseAndValidate(source, "concat-method.js");
+  const routes = transformFile(ast, "/name/:first/:last");
+  const fullVar = routes[0].handler.variables[2];
+
+  assert.equal(fullVar.name, "full");
+  assert.equal(fullVar.initExpr.type, "Concat");
+  assert.equal(fullVar.initExpr.parts.length, 3);
+  assert.equal(fullVar.initExpr.parts[0].type, "Identifier");
+  assert.equal(fullVar.initExpr.parts[0].name, "first");
+  assert.equal(fullVar.initExpr.parts[1].type, "StringLiteral");
+  assert.equal(fullVar.initExpr.parts[1].value, " ");
+  assert.equal(fullVar.initExpr.parts[2].type, "Identifier");
+  assert.equal(fullVar.initExpr.parts[2].name, "last");
+});
+
+test("transformFile: str.concat() with single arg returns IRConcat with 2 parts", () => {
+  const ast = parseAndValidate(
+    'export function GET(req, res) { const a = req.params.a; const b = a.concat("!"); return res.text(200, b); }',
+    "concat-single.js",
+  );
+  const routes = transformFile(ast, "/test/:a");
+  const bVar = routes[0].handler.variables[1];
+
+  assert.equal(bVar.initExpr.type, "Concat");
+  assert.equal(bVar.initExpr.parts.length, 2);
+  assert.equal(bVar.initExpr.parts[0].type, "Identifier");
+  assert.equal(bVar.initExpr.parts[1].type, "StringLiteral");
+});
+
+test("transformFile: str.concat() with no args returns the receiver directly", () => {
+  const ast = parseAndValidate(
+    'export function GET(req, res) { const a = req.params.a; const b = a.concat(); return res.text(200, b); }',
+    "concat-none.js",
+  );
+  const routes = transformFile(ast, "/test/:a");
+  const bVar = routes[0].handler.variables[1];
+
+  /* No args → parts has only the receiver → returns the receiver itself */
+  assert.equal(bVar.initExpr.type, "Identifier");
+  assert.equal(bVar.initExpr.name, "a");
+});
+
+test("emit: str.concat() as variable initializer emits snprintf block", () => {
+  const ctx = { concatVarCounter: 0, fetchVarCounter: 0, ownedStrings: new Set() };
+  const concatVar = IR.IRVariable("full", "string",
+    IR.IRConcat([IR.IRIdentifier("first"), IR.IRStringLiteral(" "), IR.IRIdentifier("last")]));
+  const lines = emitStatement(concatVar, 1, ctx);
+  const joined = lines.join("\n");
+
+  assert.match(joined, /malloc\(1024\)/);
+  assert.match(joined, /snprintf\(full, 1024, "%s %s", first, last\)/);
+  assert.ok(ctx.ownedStrings.has("full"), "concat result should be tracked as owned");
 });
 
 /* ---- String operations tests ---- */

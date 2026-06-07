@@ -165,13 +165,14 @@ The following `String.prototype` methods compile to native C:
 | `s.trim()` | `string` | `cerver_str_trim(s)` |
 | `s.slice(start, end)` | `string` | `cerver_str_slice(s, start, end)` |
 | `s.replace(needle, replacement)` | `string` | `cerver_str_replace(s, needle, replacement)` |
+| `s.concat(a, b, ...)` | `string` | `snprintf` (same path as template literals) |
 | `s.includes(needle)` | `boolean` (int) | `strstr(s, needle) != NULL` |
 | `s.startsWith(prefix)` | `boolean` (int) | `strncmp(s, prefix, strlen(prefix)) == 0` |
 | `s.endsWith(suffix)` | `boolean` (int) | `cerver_str_endswith(s, suffix)` |
 | `s.indexOf(needle)` | `number` (int) | `cerver_str_indexof(s, needle)` |
 | `s.length` | `number` (int) | `(int)strlen(s)` |
 
-String-returning methods (`toLowerCase`, `toUpperCase`, `trim`, `slice`, `replace`) must be used as a direct variable initializer or return value — not nested inside a larger expression — because they allocate a heap buffer.
+String-returning methods (`toLowerCase`, `toUpperCase`, `trim`, `slice`, `replace`, `concat`) must be used as a direct variable initializer or return value — not nested inside a larger expression — because they allocate a heap buffer.
 
 **Not Supported (Compile-Time Errors):**
 
