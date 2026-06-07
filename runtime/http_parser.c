@@ -191,7 +191,8 @@ int cerver_parse_request(const char* raw, size_t len, cerver_request_t* req) {
   }
 
   /* ---- Body (for POST etc.) ---- */
-  if (content_length > 0 && hdr_start < buf + len) {
+  if (content_length > 0 && hdr_start < buf + len && strcmp(req->method, "GET") != 0 &&
+      strcmp(req->method, "HEAD") != 0) {
     req->body     = hdr_start;
     req->body_len = content_length;
     /* Ensure we don't read past the buffer */

@@ -236,12 +236,12 @@ static inline int cerver_fetch_global_init_guard_run(cerver_fetch_global_init_gu
 typedef CRITICAL_SECTION cerver_mutex_t;
 
 typedef struct {
-  HANDLE event;   /* auto-reset event for signal   */
-  HANDLE bcast;   /* manual-reset event for broadcast */
+  HANDLE event; /* auto-reset event for signal   */
+  HANDLE bcast; /* manual-reset event for broadcast */
 } cerver_cond_t;
 
 typedef struct {
-  volatile LONG done;
+  volatile LONG    done;
   CRITICAL_SECTION lock;
 } cerver_fetch_global_init_guard_t;
 
@@ -249,8 +249,8 @@ typedef struct {
    we zero-init and rely on cerver_mutex_init() being called.  For the
    two static structs in server.c that use CERVER_MUTEX_INITIALIZER we
    call cerver_mutex_init() at startup via cerver_init(). */
-#define CERVER_MUTEX_INITIALIZER  {0}
-#define CERVER_COND_INITIALIZER   {0}
+#define CERVER_MUTEX_INITIALIZER                   {0}
+#define CERVER_COND_INITIALIZER                    {0}
 #define CERVER_FETCH_GLOBAL_INIT_GUARD_INITIALIZER {0, {0}}
 
 static inline int cerver_mutex_init(cerver_mutex_t* m, void* attr) {
@@ -274,7 +274,7 @@ static inline int cerver_mutex_unlock(cerver_mutex_t* m) {
 static inline int cerver_cond_init(cerver_cond_t* c, void* attr) {
   (void)attr;
   c->event = CreateEvent(NULL, FALSE, FALSE, NULL); /* auto-reset */
-  c->bcast = CreateEvent(NULL, TRUE,  FALSE, NULL); /* manual-reset */
+  c->bcast = CreateEvent(NULL, TRUE, FALSE, NULL);  /* manual-reset */
   return (c->event && c->bcast) ? 0 : -1;
 }
 static inline int cerver_cond_destroy(cerver_cond_t* c) {
@@ -302,7 +302,7 @@ static inline int cerver_cond_timedwait(cerver_cond_t* c, cerver_mutex_t* m,
   if (ms < 0) ms = 0;
   LeaveCriticalSection(m);
   HANDLE h[2] = {c->event, c->bcast};
-  DWORD r = WaitForMultipleObjects(2, h, FALSE, (DWORD)ms);
+  DWORD  r    = WaitForMultipleObjects(2, h, FALSE, (DWORD)ms);
   EnterCriticalSection(m);
   return (r == WAIT_TIMEOUT) ? 110 : 0; /* 110 = ETIMEDOUT */
 }
@@ -326,10 +326,10 @@ static inline int cerver_fetch_global_init_guard_run(cerver_fetch_global_init_gu
 #endif /* __MINGW64_VERSION_MAJOR || _MSC_VER */
 
 /* ---- thread helpers (shared across all Windows toolchains) -------- */
-typedef HANDLE             cerver_connection_worker_thread_t;
-typedef HANDLE             cerver_acceptor_thread_t;
-typedef size_t             cerver_connection_worker_thread_attr_t;
-typedef size_t             cerver_acceptor_thread_attr_t;
+typedef HANDLE cerver_connection_worker_thread_t;
+typedef HANDLE cerver_acceptor_thread_t;
+typedef size_t cerver_connection_worker_thread_attr_t;
+typedef size_t cerver_acceptor_thread_attr_t;
 
 static inline int cerver_connection_worker_thread_attr_init(
     cerver_connection_worker_thread_attr_t* attr) {

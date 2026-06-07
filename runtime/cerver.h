@@ -303,8 +303,6 @@ char* cerver_str_replace(const char* s, const char* needle, const char* replacem
 int cerver_str_endswith(const char* s, const char* suffix);
 int cerver_str_indexof(const char* s, const char* needle);
 
-
-
 /* ------------------------------------------------------------------ */
 /*  MIME (internal)                                                   */
 /* ------------------------------------------------------------------ */

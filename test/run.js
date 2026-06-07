@@ -116,12 +116,12 @@ export function GET(req, res) {
 
 test("validate rejects unsupported HTTP methods and async handlers", () => {
   const badMethod = parseSource(
-    "export function PUT(req, res) { return res.text(200, 'no'); }",
+    "export function TRACE(req, res) { return res.text(200, 'no'); }",
     "bad-method.js",
   );
   assert.throws(
     () => validate(badMethod.ast, "bad-method.js", badMethod.source),
-    /exported function "PUT" is not a valid HTTP method/,
+    /exported function "TRACE" is not a valid HTTP method/,
   );
 
   const asyncHandler = parseSource(
