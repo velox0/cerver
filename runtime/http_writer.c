@@ -17,6 +17,8 @@
 
 #if !CERVER_PLATFORM_WINDOWS
 #include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <sys/uio.h>
 #endif  // !CERVER_PLATFORM_WINDOWS
 
@@ -168,20 +170,70 @@ int cerver_write_response(int fd, const cerver_response_t* res, int keepalive) {
 #undef HDR_APPEND
 
   if (res->_body_owned == 3) {
-    /* File-descriptor sendfile path */
+    /* ---- Non-blocking sendfile path ----------------------------------------
+     *
+     * Switch the socket to non-blocking mode for the duration of the file
+     * send so the connection worker thread is never stalled on a slow client.
+     * Between each sendfile call we poll(POLLOUT) to wait only until the
+     * kernel socket-send buffer has room, then continue.  This allows the OS
+     * scheduler to service other work while the client drains its TCP window.
+     *
+     * We restore the original socket flags when we are done.
+     * ------------------------------------------------------------------ */
     if (send_all(sfd, header, hlen) < 0) return -1;
+
+#if !CERVER_PLATFORM_WINDOWS
+    /* Save current flags and switch to non-blocking */
+    int orig_flags = fcntl(sfd, F_GETFL, 0);
+    if (orig_flags >= 0) {
+      fcntl(sfd, F_SETFL, orig_flags | O_NONBLOCK);
+    }
+#endif  // !CERVER_PLATFORM_WINDOWS
+
     size_t total = res->body_len, sent = 0;
+    int    send_err = 0;
+
     while (sent < total) {
       ssize_t n = do_sendfile(sfd, res->_file_fd, (off_t)sent, total - sent);
-      if (n < 0) {
-#if !CERVER_PLATFORM_WINDOWS
-        if (errno == EINTR) continue;
-#endif  // !CERVER_PLATFORM_WINDOWS
-        return -1;
+
+      if (n > 0) {
+        sent += (size_t)n;
+        continue;
       }
-      if (n == 0) break;
-      sent += (size_t)n;
+
+      if (n == 0) break; /* EOF / done */
+
+#if !CERVER_PLATFORM_WINDOWS
+      if (errno == EINTR) continue;
+
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        /* Socket buffer full — yield until writable (max 30 s) */
+        struct pollfd pfd  = {.fd = sfd, .events = POLLOUT, .revents = 0};
+        int           pret = poll(&pfd, 1, 30000 /* ms */);
+        if (pret <= 0) {
+          send_err = 1;
+          break;
+        } /* timeout or error */
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+          send_err = 1;
+          break;
+        }
+        continue; /* retry sendfile */
+      }
+#endif  // !CERVER_PLATFORM_WINDOWS
+
+      send_err = 1;
+      break;
     }
+
+#if !CERVER_PLATFORM_WINDOWS
+    /* Restore original socket flags */
+    if (orig_flags >= 0) {
+      fcntl(sfd, F_SETFL, orig_flags);
+    }
+#endif  // !CERVER_PLATFORM_WINDOWS
+
+    if (send_err) return -1;
   } else if (res->body && res->body_len > 0) {
     if (hlen + res->body_len <= sizeof(header)) {
       /* Small response: one syscall */

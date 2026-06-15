@@ -49,6 +49,12 @@ npx @velox0/cerver@latest build
 npx @velox0/cerver@latest run
 ```
 
+Package for deployment (bundles binary + assets into `dist/package/`):
+
+```bash
+npx @velox0/cerver@latest package
+```
+
 Alternatively, you can install it globally:
 
 ```bash
@@ -57,6 +63,7 @@ cerver new my-fast-api
 cd my-fast-api
 cerver build
 cerver run
+cerver package   # creates dist/package/ ready to deploy
 ```
 
 ## Routing
@@ -188,11 +195,35 @@ String-returning methods (`toLowerCase`, `toUpperCase`, `trim`, `slice`, `replac
 
 ```javascript
 export default {
-  port: 8080, // Default port
-  embed: true, // Embed assets from public/ into the binary
-  minify: true, // Minify HTML/CSS/JS before embedding
-  compression: "none", // Future: pre-compress assets
+  port: 8080,     // Default port
+  embed: true,    // true  → assets compiled into binary as C byte arrays (single-binary deploy)
+                  // false → assets copied to dist/public/ and served from disk at runtime
+  minify: true,   // Minify HTML/CSS/JS before embedding or copying
+  compression: "none", // Future: pre-compress assets ("gzip" | "brotli" | "both")
 };
+```
+
+### Deployment Modes
+
+**Embedded (default — `embed: true`)**
+
+Assets are baked into the binary. Deploy a single file:
+
+```bash
+cerver build
+./dist/server        # or: cerver run
+```
+
+**Filesystem (`embed: false`)**
+
+Assets are copied to `dist/public/` at build time and served from disk at runtime (non-blocking via `sendfile` + `poll`). Use `cerver package` to bundle everything:
+
+```bash
+cerver build --no-embed
+cerver package        # → dist/package/server + dist/package/public/
+
+# deploy: copy dist/package/ to your server and run:
+./server
 ```
 
 ## How It Works

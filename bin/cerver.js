@@ -74,4 +74,13 @@ program
     run(opts);
   });
 
+program
+  .command("package")
+  .description("Bundle the compiled binary and assets into a deployable package (dist/package/)")
+  .option("-o, --output <path>", "Output directory (default: dist/package)")
+  .action((opts) => {
+    const { pkg } = require("../lib/commands/package");
+    pkg(opts);
+  });
+
 program.parse();
